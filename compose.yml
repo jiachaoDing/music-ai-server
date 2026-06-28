@@ -9,13 +9,22 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   server:
-    build: .
+    image: ${SERVER_IMAGE:-music-ai-server:local}
+    build:
+      context: .
+      target: runtime
     container_name: music-ai-server
     restart: unless-stopped
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -24,7 +33,13 @@ services:
       MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
     ports:
       - "${SERVER_PORT:-3000}:3000"
-    command: sh -c "npm run prisma:deploy && node dist/main.js"
+    command: ["node", "dist/main.js"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
 volumes:
   postgres_data:
