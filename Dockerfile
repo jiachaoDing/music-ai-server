@@ -1,7 +1,9 @@
 FROM node:22-alpine AS base
 WORKDIR /app
 ENV CI=true
-RUN apk add --no-cache openssl
+ARG APK_MIRROR=https://mirrors.aliyun.com/alpine
+RUN sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${APK_MIRROR}|g" /etc/apk/repositories \
+    && apk add --no-cache openssl
 
 FROM base AS deps
 COPY package*.json ./
