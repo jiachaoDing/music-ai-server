@@ -21,9 +21,10 @@ services:
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-music_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-music_ai}?schema=public
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
     ports:
       - "${SERVER_PORT:-3000}:3000"
-    command: sh -c "npm run prisma:deploy && node dist/main.js"
+    command: sh -c "npm run prisma:deploy && node dist/src/main.js"
 
 volumes:
   postgres_data:
