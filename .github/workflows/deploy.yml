@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build-and-deploy:
@@ -15,38 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set image name
-        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
+      - uses: actions/setup-node@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          node-version: 22
+          cache: npm
 
-      - name: Build test stage
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: test
-          push: false
-          tags: ${{ env.IMAGE_NAME }}:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: runtime
-          push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.IMAGE_NAME }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - run: npm ci
+      - run: npm test
 
       - name: Prepare SSH
         run: |
@@ -55,16 +29,16 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Prepare server env
+      - name: Package
         run: |
+          tar --exclude=node_modules --exclude=dist --exclude=coverage --exclude=.git --exclude=.env -czf "$RUNNER_TEMP/server.tar.gz" .
           printf '%s\n' "${{ secrets.SERVER_ENV }}" > "$RUNNER_TEMP/server.env"
-          printf '\nSERVER_IMAGE=%s\n' "${IMAGE_NAME}:${GITHUB_SHA}" >> "$RUNNER_TEMP/server.env"
 
       - name: Deploy
         run: |
           ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "mkdir -p '${{ secrets.SERVER_DEPLOY_PATH }}'"
-          scp -i ~/.ssh/deploy_key compose.yml "$RUNNER_TEMP/server.env" "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/"
-          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "cd '${{ secrets.SERVER_DEPLOY_PATH }}' && mv server.env .env && if [ -n '${{ secrets.GHCR_TOKEN }}' ]; then printf '%s\n' '${{ secrets.GHCR_TOKEN }}' | docker login ghcr.io -u '${{ secrets.GHCR_USERNAME }}' --password-stdin; fi && docker compose --env-file .env pull server && docker compose --env-file .env up -d --wait postgres && docker compose --env-file .env run --rm --no-deps server npm run prisma:deploy && docker compose --env-file .env up -d --no-build --wait server"
+          scp -i ~/.ssh/deploy_key "$RUNNER_TEMP/server.tar.gz" "$RUNNER_TEMP/server.env" "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/"
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "cd '${{ secrets.SERVER_DEPLOY_PATH }}' && tar -xzf server.tar.gz && mv server.env .env && rm server.tar.gz && DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose --env-file .env build server && docker compose --env-file .env up -d --wait postgres && docker compose --env-file .env run --rm --no-deps server npm run prisma:deploy && docker compose --env-file .env up -d --no-build --wait server"
 
       - name: Verify deployment
         run: |
