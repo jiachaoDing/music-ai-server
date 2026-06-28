@@ -1,0 +1,38 @@
+name: Deploy server
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test -- --runInBand
+      - run: npm run build
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Package
+        run: |
+          tar --exclude=node_modules --exclude=dist --exclude=.git -czf server.tar.gz .
+          printf '%s' "${{ secrets.SERVER_ENV }}" > server.env
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "mkdir -p '${{ secrets.SERVER_DEPLOY_PATH }}'"
+          scp -i ~/.ssh/deploy_key server.tar.gz server.env "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/"
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "cd '${{ secrets.SERVER_DEPLOY_PATH }}' && tar -xzf server.tar.gz && mv server.env .env && rm server.tar.gz && docker compose --env-file .env up -d --build"

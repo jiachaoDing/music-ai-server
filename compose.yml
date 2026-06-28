@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: music-ai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-music_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-music_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  server:
+    build: .
+    container_name: music-ai-server
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-music_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-music_ai}?schema=public
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
+    ports:
+      - "${SERVER_PORT:-3000}:3000"
+    command: sh -c "npm run prisma:deploy && node dist/main.js"
+
+volumes:
+  postgres_data:
