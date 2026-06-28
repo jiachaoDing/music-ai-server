@@ -2,12 +2,14 @@ FROM node:22-alpine AS base
 WORKDIR /app
 ENV CI=true
 ARG APK_MIRROR=https://mirrors.aliyun.com/alpine
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 RUN sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${APK_MIRROR}|g" /etc/apk/repositories \
-    && apk add --no-cache openssl
+    && apk add --no-cache openssl \
+    && npm config set registry "${NPM_REGISTRY}"
 
 FROM base AS deps
 COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci --prefer-offline --no-audit --fund=false
 
 FROM deps AS build
 COPY prisma ./prisma
@@ -21,9 +23,8 @@ COPY test ./test
 COPY nest-cli.json tsconfig*.json vitest*.config.ts ./
 RUN npm test && npm run test:e2e
 
-FROM base AS prod-deps
-COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --ignore-scripts
+FROM deps AS prod-deps
+RUN npm prune --omit=dev --ignore-scripts
 
 FROM base AS runtime
 ENV NODE_ENV=production
