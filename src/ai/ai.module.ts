@@ -5,5 +5,6 @@ import { MiniMaxService } from './minimax.service';
 @Module({
   controllers: [AiController],
   providers: [MiniMaxService],
+  exports: [MiniMaxService],
 })
 export class AiModule {}
