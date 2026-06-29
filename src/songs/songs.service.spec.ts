@@ -1,8 +1,15 @@
 import { BadGatewayException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MiniMaxService } from '../ai/minimax.service';
-import { PrismaService } from '../prisma/prisma.service';
+import type { MiniMaxService } from '../ai/minimax.service';
 import { SongsService } from './songs.service';
+
+vi.mock('@prisma/client', () => ({
+  PrismaClient: class {
+    async $disconnect() {
+      return undefined;
+    }
+  },
+}));
 
 describe('SongsService', () => {
   const dto = {
@@ -26,7 +33,7 @@ describe('SongsService', () => {
     };
     songsService = new SongsService(
       miniMaxService as unknown as MiniMaxService,
-      prismaService as unknown as PrismaService,
+      prismaService as never,
     );
   });
 
