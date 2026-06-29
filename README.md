@@ -1,60 +1,73 @@
-# music-ai-server
+﻿# music-ai-server
 
 NestJS + Prisma + PostgreSQL 后端，用于 AI 音乐生成项目实训。
+脚手架使用总入口请先阅读：[../开发脚手架使用指南/00-README.md](../开发脚手架使用指南/00-README.md)
 
 | 能力 | 地址 |
 | --- | --- |
 | 健康检查 | `GET /health` |
 | 歌曲列表 | `GET /api/songs` |
 | Mock 生成 | `POST /api/generate/mock` |
+| AI 接口 | `GET/POST /api/ai/*` |
 | Swagger | `http://localhost:3000/docs` |
 | OpenAPI JSON | `http://localhost:3000/docs-json` |
 
-本地运行：
+## 快速启动
+
+完整启动后端前，请先安装 PostgreSQL，并创建 `.env` 中 `DATABASE_URL` 指向的数据库。
+
+| 前置项 | 要求 |
+| --- | --- |
+| PostgreSQL | 先在本机下载安装并启动 PostgreSQL 服务 |
+| 数据库 | 创建数据库，例如 `.env.example` 默认连接的 `music_ai` |
+| 连接配置 | 复制 `.env.example` 为 `.env` 后，确认 `DATABASE_URL` 的账号、密码、主机、端口和数据库名正确 |
 
 ```bash
-cp .env.example .env
+copy .env.example .env
 npm install
 npm run prisma:generate
+npm run prisma:deploy
 npm run start:dev
 ```
 
-本地数据库开发流程：
-
-| 步骤 | 命令或配置 | 说明 |
-| --- | --- | --- |
-| 1 | `cp .env.example .env` | 创建本地环境变量文件，不提交 GitHub |
-| 2 | 在 `.env` 配置 `POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD` | Docker PostgreSQL 启动时使用 |
-| 3 | 在 `.env` 配置 `DATABASE_URL` | NestJS / Prisma 连接本地 PostgreSQL |
-| 4 | `docker compose --env-file .env up -d postgres` | 只启动本地 PostgreSQL |
-| 5 | `npm run prisma:generate` | 生成 Prisma Client |
-| 6 | `npm run prisma:migrate` | 本地创建或更新数据库表结构 |
-| 7 | `npm run start:dev` | 本地启动 NestJS 后端 |
-
-本地 `.env` 数据库示例：
-
-```env
-POSTGRES_DB=music_ai
-POSTGRES_USER=music_ai
-POSTGRES_PASSWORD=change_me
-DATABASE_URL=postgresql://music_ai:change_me@localhost:5432/music_ai?schema=public
-```
-
-如果只调试 `POST /api/generate/mock` 或 `/api/ai/*`，当前接口不依赖数据库，可以先不启动 PostgreSQL。
-
-Docker 一次性启动数据库和后端：
-
-```bash
-docker compose --env-file .env up -d --build
-```
-
-`.env` 最少需要：
-
-| 变量 | 示例 |
+| 脚本 | 用途 |
 | --- | --- |
-| `PORT` | `3000` |
-| `CORS_ORIGIN` | `http://localhost:5173` |
-| `DATABASE_URL` | `postgresql://music_ai:change_me@localhost:5432/music_ai?schema=public` |
-| `POSTGRES_PASSWORD` | `change_me` |
+| `npm run start:dev` | 本地开发启动 |
+| `npm test` | 运行后端测试 |
+| `npm run build` | 构建后端 |
+| `npm run prisma:generate` | 生成 Prisma Client，即代码中用于类型安全访问数据库的客户端 |
+| `npm run prisma:migrate` | 本地创建或更新 migration |
+| `npm run prisma:deploy` | 将已有 migration 应用到 `DATABASE_URL` 指向的数据库 |
 
-GitHub Actions 会在 `main` 分支提交后执行测试、构建、上传服务器，并通过 Docker Compose 重建服务与执行 Prisma migration。真实密钥只放 GitHub Secrets。
+## Prisma 的用途
+
+Prisma 用 `prisma/schema.prisma` 描述数据库结构。这个文件是后端代码和 PostgreSQL 表结构之间的中间层：开发者先在 `schema.prisma` 中定义数据模型，再通过 Prisma 命令生成代码客户端或同步数据库结构。
+
+| 文件或命令 | 作用 |
+| --- | --- |
+| `prisma/schema.prisma` | 定义数据模型、字段、关系和数据库连接方式 |
+| `npm run prisma:generate` | 根据 `schema.prisma` 生成 Prisma Client，供后端代码类型安全地访问数据库 |
+| `npm run prisma:deploy` | 将 `prisma/migrations` 中已有的数据库变更应用到 `DATABASE_URL` 指向的数据库 |
+| `npm run prisma:migrate` | 开发者修改 `schema.prisma` 后，创建新的 migration 并更新本地数据库 |
+
+```mermaid
+flowchart LR
+  A["prisma/schema.prisma"] --> B["npm run prisma:generate"]
+  A --> C["npm run prisma:migrate"]
+  C --> D["prisma/migrations"]
+  D --> E["npm run prisma:deploy"]
+  B --> F["生成代码使用的 Prisma Client"]
+  C --> G["创建新的 migration 并更新本地数据库"]
+  E --> H["执行已有 migration 到 DATABASE_URL 指向的数据库"]
+```
+
+项目首次启动时，migration 文件已经随项目提交，只需要执行 `npm run prisma:deploy` 应用到自己的 PostgreSQL 数据库。只有在开发者修改 `schema.prisma` 并需要生成新的数据库变更文件时，才使用 `npm run prisma:migrate`。
+
+| 本地 `.env` | 说明 |
+| --- | --- |
+| `PORT` | 后端端口，默认 `3000` |
+| `CORS_ORIGIN` | 允许访问后端的前端地址 |
+| `DATABASE_URL` | Prisma 数据库连接，需要指向已创建的 PostgreSQL 数据库 |
+| `MINIMAX_API_KEY` | 真实 AI Key，向老师领取 |
+
+PostgreSQL 安装、建库和连接配置可参考 `../开发脚手架使用指南/07-database.md`。如果只临时调试 mock 或 AI 接口，可以不连接数据库；完整启动和数据库相关接口仍需要先完成 PostgreSQL 准备。
