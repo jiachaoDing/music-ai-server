@@ -12,6 +12,15 @@ export class SongsService {
 
   async generateAndSave(dto: MusicRequestDto) {
     const generatedMusic = await this.miniMaxService.generateMusic(dto);
+    const author = await this.prisma.user.upsert({
+      where: { id: 'system-user' },
+      update: {},
+      create: {
+        id: 'system-user',
+        name: 'Echo Creator',
+        passwordHash: 'system-generated-user',
+      },
+    });
 
     return this.prisma.song.create({
       data: {
@@ -20,7 +29,10 @@ export class SongsService {
         prompt: dto.style,
         status: 'generated',
         audioUrl: generatedMusic.audioUrl,
-        lyric: dto.lyrics,
+        lyrics: dto.lyrics,
+        author: { connect: { id: author.id } },
+        authorName: author.name,
+        authorColor: author.color,
       },
     });
   }

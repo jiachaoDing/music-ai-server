@@ -6,16 +6,318 @@ datasource db {
   provider = "postgresql"
 }
 
-model Song {
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  passwordHash String
+  avatarUrl    String?
+  color        String?
+  role         String   @default("user")
+  points       Int      @default(0)
+  invitedBy    String?
+  lastCheckin  String?
+  streak       Int      @default(0)
+  stats        Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  inviteCodesCreated InviteCode[]   @relation("InviteCodeCreatedBy")
+  inviteCodeUsed     InviteCode?    @relation("InviteCodeUsedBy")
+  pointsLedger       PointsLedger[]
+  songs              Song[]
+  aiTasks            AiTask[]
+  comments           Comment[]
+  likes              Like[]
+  collects           Collect[]
+  playlists          Playlist[]
+  battleVotes        BattleVote[]
+  fortunes           Fortune[]
+
+  @@map("users")
+}
+
+model InviteCode {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  createdBy String
+  usedBy    String?   @unique
+  usedAt    DateTime?
+  status    String    @default("unused")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  creator  User  @relation("InviteCodeCreatedBy", fields: [createdBy], references: [id])
+  usedUser User? @relation("InviteCodeUsedBy", fields: [usedBy], references: [id])
+
+  @@index([createdBy])
+  @@map("invite_codes")
+}
+
+model PointsLedger {
   id        String   @id @default(cuid())
-  title     String
-  style     String
-  prompt    String
-  status    String   @default("ready")
-  audioUrl  String?
-  lyric     String?
+  userId    String
+  delta     Int
+  reason    String
+  balance   Int?
+  relatedId String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("points_ledger")
+}
+
+model Song {
+  id             String    @id @default(cuid())
+  title          String
+  description    String?
+  prompt         String?
+  keywords       Json?
+  mode           String    @default("song")
+  style          String
+  tags           Json?
+  lyrics         String?
+  audioUrl       String?
+  coverImg       String?
+  cover          String?
+  duration       Int?
+  status         String    @default("draft")
+  published      Boolean   @default(false)
+  isInstrumental Boolean   @default(false)
+  forWho         String?
+  unlocked       Boolean   @default(true)
+  authorId       String
+  authorName     String?
+  authorColor    String?
+  originId       String?
+  challengeId    String?
+  albumId        String?
+  review         String?
+  djText         String?
+  djUrl          String?
+  likes          Int       @default(0)
+  plays          Int       @default(0)
+  coverCount     Int       @default(0)
+  commentCount   Int       @default(0)
+  hostPick       Boolean   @default(false)
+  hostPicked     Boolean   @default(false)
+  publishedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  author         User           @relation(fields: [authorId], references: [id])
+  origin         Song?          @relation("SongOrigin", fields: [originId], references: [id])
+  remixes        Song[]         @relation("SongOrigin")
+  challenge      Challenge?     @relation(fields: [challengeId], references: [id])
+  aiTasks        AiTask[]
+  comments       Comment[]
+  likeRecords    Like[]
+  collectRecords Collect[]
+  playlistSongs  PlaylistSong[]
+  battleAsA      Battle[]       @relation("BattleSongA")
+  battleAsB      Battle[]       @relation("BattleSongB")
+  fortunes       Fortune[]
+
+  @@index([authorId])
+  @@index([originId])
+  @@index([challengeId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("songs")
+}
+
+model AiTask {
+  id         String   @id @default(cuid())
+  type       String
+  status     String   @default("queued")
+  stage      String?
+  progress   Int      @default(0)
+  queueAhead Int?
+  userId     String?
+  songId     String?
+  albumId    String?
+  input      Json?
+  result     Json?
+  error      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id])
+  song Song? @relation(fields: [songId], references: [id])
+
+  @@index([userId])
+  @@index([songId])
+  @@map("ai_tasks")
+}
+
+model Comment {
+  id        String    @id @default(cuid())
+  songId    String
+  userId    String
+  userName  String?
+  userColor String?
+  text      String
+  anon      Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  song Song @relation(fields: [songId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([songId])
+  @@index([userId])
+  @@map("comments")
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  songId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+  song Song @relation(fields: [songId], references: [id])
+
+  @@unique([userId, songId])
+  @@index([songId])
+  @@map("likes")
+}
+
+model Collect {
+  id         String   @id @default(cuid())
+  userId     String
+  songId     String
+  playlistId String?
+  createdAt  DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id])
+  song     Song      @relation(fields: [songId], references: [id])
+  playlist Playlist? @relation(fields: [playlistId], references: [id])
+
+  @@index([userId])
+  @@index([songId])
+  @@index([playlistId])
+  @@map("collects")
+}
+
+model Playlist {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  color     String?
+  type      String   @default("custom")
+  isSystem  Boolean  @default(false)
+  songCount Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@map("songs")
+  user     User           @relation(fields: [userId], references: [id])
+  collects Collect[]
+  songs    PlaylistSong[]
+
+  @@index([userId])
+  @@map("playlists")
+}
+
+model PlaylistSong {
+  id         String   @id @default(cuid())
+  playlistId String
+  songId     String
+  createdAt  DateTime @default(now())
+
+  playlist Playlist @relation(fields: [playlistId], references: [id])
+  song     Song     @relation(fields: [songId], references: [id])
+
+  @@unique([playlistId, songId])
+  @@index([songId])
+  @@map("playlist_songs")
+}
+
+model Challenge {
+  id        String   @id @default(cuid())
+  title     String
+  desc      String?
+  emoji     String?
+  color     String?
+  createdBy String?
+  status    String   @default("active")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  songs Song[]
+
+  @@index([status])
+  @@map("challenges")
+}
+
+model Battle {
+  id        String   @id @default(cuid())
+  topic     String
+  aId       String
+  bId       String
+  aVotes    Int      @default(0)
+  bVotes    Int      @default(0)
+  createdBy String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  songA Song         @relation("BattleSongA", fields: [aId], references: [id])
+  songB Song         @relation("BattleSongB", fields: [bId], references: [id])
+  votes BattleVote[]
+
+  @@index([aId])
+  @@index([bId])
+  @@index([status])
+  @@map("battles")
+}
+
+model BattleVote {
+  id        String   @id @default(cuid())
+  battleId  String
+  userId    String
+  side      String
+  createdAt DateTime @default(now())
+
+  battle Battle @relation(fields: [battleId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([battleId, userId])
+  @@index([userId])
+  @@map("battle_votes")
+}
+
+model Fortune {
+  id            String   @id @default(cuid())
+  userId        String
+  date          String
+  keyword       String
+  mood          Json
+  battery       Int
+  luckyColor    Json
+  luckyNumber   Int
+  peak          String?
+  encourage     String?
+  action        String?
+  dos           Json?
+  donts         Json?
+  recharge      String?
+  img           String?
+  imgGenerating Boolean  @default(false)
+  streak        Int      @default(0)
+  streakBadge   Json?
+  songId        String?
+  songTitle     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User  @relation(fields: [userId], references: [id])
+  song Song? @relation(fields: [songId], references: [id])
+
+  @@unique([userId, date])
+  @@index([songId])
+  @@map("fortunes")
 }

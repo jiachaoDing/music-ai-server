@@ -19,7 +19,10 @@ describe('SongsService', () => {
   };
 
   let miniMaxService: { generateMusic: ReturnType<typeof vi.fn> };
-  let prismaService: { song: { create: ReturnType<typeof vi.fn> } };
+  let prismaService: {
+    user: { upsert: ReturnType<typeof vi.fn> };
+    song: { create: ReturnType<typeof vi.fn> };
+  };
   let songsService: SongsService;
 
   beforeEach(() => {
@@ -27,6 +30,9 @@ describe('SongsService', () => {
       generateMusic: vi.fn(),
     };
     prismaService = {
+      user: {
+        upsert: vi.fn(),
+      },
       song: {
         create: vi.fn(),
       },
@@ -47,9 +53,17 @@ describe('SongsService', () => {
       prompt: dto.style,
       status: 'generated',
       audioUrl: 'https://example.com/song.mp3',
-      lyric: dto.lyrics,
+      lyrics: dto.lyrics,
+      authorId: 'system-user',
+      authorName: 'Echo Creator',
+      authorColor: null,
       createdAt,
       updatedAt,
+    };
+    const author = {
+      id: 'system-user',
+      name: 'Echo Creator',
+      color: null,
     };
 
     miniMaxService.generateMusic.mockResolvedValue({
@@ -59,12 +73,22 @@ describe('SongsService', () => {
       audioUrl: createdSong.audioUrl,
       providerResponse: {},
     });
+    prismaService.user.upsert.mockResolvedValue(author);
     prismaService.song.create.mockResolvedValue(createdSong);
 
     await expect(songsService.generateAndSave(dto)).resolves.toEqual(
       createdSong,
     );
     expect(miniMaxService.generateMusic).toHaveBeenCalledWith(dto);
+    expect(prismaService.user.upsert).toHaveBeenCalledWith({
+      where: { id: 'system-user' },
+      update: {},
+      create: {
+        id: 'system-user',
+        name: 'Echo Creator',
+        passwordHash: 'system-generated-user',
+      },
+    });
     expect(prismaService.song.create).toHaveBeenCalledWith({
       data: {
         title: dto.title,
@@ -72,7 +96,10 @@ describe('SongsService', () => {
         prompt: dto.style,
         status: 'generated',
         audioUrl: createdSong.audioUrl,
-        lyric: dto.lyrics,
+        lyrics: dto.lyrics,
+        author: { connect: { id: author.id } },
+        authorName: author.name,
+        authorColor: author.color,
       },
     });
   });
