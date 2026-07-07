@@ -19,6 +19,7 @@ async function bootstrap() {
     .setTitle('Music AI Server')
     .setDescription('AI 音乐生成项目实训 API')
     .setVersion('0.1.0')
+    .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('docs', app, document);
