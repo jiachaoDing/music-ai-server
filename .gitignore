@@ -1,8 +1,39 @@
+# -- Dependencies --
 node_modules
+
+# -- Build output --
 dist
+*.tsbuildinfo
+
+# -- Test coverage --
 coverage
+
+# -- Environment variables --
 .env
 .env.*
 !.env.example
+
+# -- Logs --
 *.log
 npm-debug.log*
+logs/
+
+# -- IDE / Editor --
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# -- OS generated files --
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# -- Cache --
+.eslintcache
