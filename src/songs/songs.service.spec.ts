@@ -47,7 +47,7 @@ describe('SongsService', () => {
       prompt: dto.style,
       status: 'generated',
       audioUrl: 'https://example.com/song.mp3',
-      lyric: dto.lyrics,
+      lyrics: dto.lyrics,
       createdAt,
       updatedAt,
     };
@@ -72,7 +72,7 @@ describe('SongsService', () => {
         prompt: dto.style,
         status: 'generated',
         audioUrl: createdSong.audioUrl,
-        lyric: dto.lyrics,
+        lyrics: dto.lyrics,
       },
     });
   });
