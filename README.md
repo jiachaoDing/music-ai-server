@@ -6,6 +6,10 @@ NestJS + Prisma + PostgreSQL 后端，用于 AI 音乐生成项目实训。
 | 能力 | 地址 |
 | --- | --- |
 | 健康检查 | `GET /health` |
+| 用户注册 | `POST /api/auth/register` |
+| 用户登录 | `POST /api/auth/login` |
+| 当前用户 | `GET /api/auth/me` |
+| 退出登录 | `POST /api/auth/logout` |
 | 歌曲列表 | `GET /api/songs` |
 | Mock 生成 | `POST /api/generate/mock` |
 | AI 接口 | `GET/POST /api/ai/*` |
@@ -27,8 +31,11 @@ copy .env.example .env
 npm install
 npm run prisma:generate
 npm run prisma:deploy
+npm run prisma:seed
 npm run start:dev
 ```
+
+注册需要邀请码。首次部署后执行 `npm run prisma:seed` 会创建管理员账号和默认邀请码 `ECHO-2026`。
 
 | 脚本 | 用途 |
 | --- | --- |
@@ -38,6 +45,7 @@ npm run start:dev
 | `npm run prisma:generate` | 生成 Prisma Client，即代码中用于类型安全访问数据库的客户端 |
 | `npm run prisma:migrate` | 本地创建或更新 migration |
 | `npm run prisma:deploy` | 将已有 migration 应用到 `DATABASE_URL` 指向的数据库 |
+| `npm run prisma:seed` | 初始化管理员账号和默认邀请码 |
 
 ## Prisma 的用途
 
@@ -68,6 +76,8 @@ flowchart LR
 | `PORT` | 后端端口，默认 `3000` |
 | `CORS_ORIGIN` | 允许访问后端的前端地址 |
 | `DATABASE_URL` | Prisma 数据库连接，需要指向已创建的 PostgreSQL 数据库 |
+| `JWT_SECRET` | JWT 签名密钥，生产环境请使用足够长的随机字符串 |
+| `JWT_EXPIRES_IN` | Token 有效期，默认 `7d` |
 | `MINIMAX_API_KEY` | 真实 AI Key，向老师领取 |
 
 PostgreSQL 安装、建库和连接配置可参考 `../开发脚手架使用指南/07-database.md`。如果只临时调试 mock 或 AI 接口，可以不连接数据库；完整启动和数据库相关接口仍需要先完成 PostgreSQL 准备。

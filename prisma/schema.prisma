@@ -6,16 +6,441 @@ datasource db {
   provider = "postgresql"
 }
 
-model Song {
+model User {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  passwordHash String
+  avatarUrl    String?
+  color        String?
+  role         String   @default("user")
+  points       Int      @default(0)
+  invitedBy    String?
+  lastCheckin  String?
+  streak       Int      @default(0)
+  stats        Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  inviter              User?        @relation("UserInvites", fields: [invitedBy], references: [id])
+  invitees             User[]       @relation("UserInvites")
+  createdInviteCodes   InviteCode[] @relation("InviteCodeCreator")
+  usedInviteCode       InviteCode?  @relation("InviteCodeUser")
+  pointsLedger         PointsLedger[]
+  songs                Song[]
+  aiTasks              AiTask[]
+  comments             Comment[]
+  likes                Like[]
+  collects             Collect[]
+  playlists            Playlist[]
+  battlesCreated       Battle[]
+  battleVotes          BattleVote[]
+  fortunes             Fortune[]
+  albums               Album[]
+  remixRelations       RemixRelation[]
+  reports              Report[]
+  adminLogs            AdminLog[]
+
+  @@map("users")
+}
+
+model InviteCode {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  createdBy String
+  usedBy    String?   @unique
+  usedAt    DateTime?
+  status    String    @default("unused")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  creator User  @relation("InviteCodeCreator", fields: [createdBy], references: [id])
+  user    User? @relation("InviteCodeUser", fields: [usedBy], references: [id])
+
+  @@map("invite_codes")
+}
+
+model PointsLedger {
   id        String   @id @default(cuid())
-  title     String
-  style     String
-  prompt    String
-  status    String   @default("ready")
-  audioUrl  String?
-  lyric     String?
+  userId    String
+  delta     Int
+  reason    String
+  balance   Int?
+  relatedId String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("points_ledger")
+}
+
+model Song {
+  id             String    @id @default(cuid())
+  title          String
+  description    String?
+  prompt         String?
+  keywords       Json?
+  mode           String    @default("song")
+  style          String
+  tags           Json?
+  lyrics         String?
+  audioUrl       String?
+  coverImg       String?
+  cover          String?
+  duration       Int?
+  status         String    @default("draft")
+  published      Boolean   @default(false)
+  isInstrumental Boolean   @default(false)
+  forWho         String?
+  unlocked       Boolean   @default(false)
+  authorId       String?
+  authorName     String?
+  authorColor    String?
+  originId       String?
+  challengeId    String?
+  albumId        String?
+  review         String?
+  djText         String?
+  djUrl          String?
+  likes          Int       @default(0)
+  plays          Int       @default(0)
+  coverCount     Int       @default(0)
+  commentCount   Int       @default(0)
+  hostPick       Boolean   @default(false)
+  hostPicked     Boolean   @default(false)
+  publishedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  author         User?           @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  challenge      Challenge?      @relation(fields: [challengeId], references: [id], onDelete: SetNull)
+  album          Album?          @relation(fields: [albumId], references: [id], onDelete: SetNull)
+  aiTasks        AiTask[]
+  comments       Comment[]
+  likesRel       Like[]
+  collects       Collect[]
+  playlistSongs  PlaylistSong[]
+  albumSongs     AlbumSong[]
+  hostContents   HostContent[]
+  remixSources   RemixRelation[] @relation("RemixSource")
+  remixTargets   RemixRelation[] @relation("RemixTarget")
+  fortunes       Fortune[]
+  battlesAsA     Battle[]        @relation("BattleSongA")
+  battlesAsB     Battle[]        @relation("BattleSongB")
+
+  @@index([authorId])
+  @@index([status])
+  @@map("songs")
+}
+
+model AiTask {
+  id         String   @id @default(cuid())
+  type       String
+  status     String   @default("queued")
+  stage      String?
+  progress   Int      @default(0)
+  queueAhead Int?
+  userId     String?
+  songId     String?
+  albumId    String?
+  input      Json?
+  result     Json?
+  error      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  song  Song?  @relation(fields: [songId], references: [id], onDelete: SetNull)
+  album Album? @relation(fields: [albumId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@map("ai_tasks")
+}
+
+model Comment {
+  id        String    @id @default(cuid())
+  songId    String
+  userId    String
+  userName  String?
+  userColor String?
+  text      String
+  anon      Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([songId])
+  @@map("comments")
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  songId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, songId])
+  @@map("likes")
+}
+
+model Collect {
+  id         String   @id @default(cuid())
+  userId     String
+  songId     String
+  playlistId String?
+  createdAt  DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  song     Song      @relation(fields: [songId], references: [id], onDelete: Cascade)
+  playlist Playlist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("collects")
+}
+
+model Playlist {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  color     String?
+  type      String   @default("custom")
+  isSystem  Boolean  @default(false)
+  songCount Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@map("songs")
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  playlistSongs PlaylistSong[]
+  collects      Collect[]
+
+  @@index([userId])
+  @@map("playlists")
+}
+
+model PlaylistSong {
+  id         String   @id @default(cuid())
+  playlistId String
+  songId     String
+  createdAt  DateTime @default(now())
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  song     Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, songId])
+  @@map("playlist_songs")
+}
+
+model HostContent {
+  id            String   @id @default(cuid())
+  type          String
+  title         String
+  content       String
+  note          String?
+  relatedSongId String?
+  color         String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  relatedSong Song? @relation(fields: [relatedSongId], references: [id], onDelete: SetNull)
+
+  @@map("host_contents")
+}
+
+model Resonance {
+  id          String   @id @default(cuid())
+  title       String
+  reason      String?
+  tags        Json?
+  songIds     Json
+  generatedBy String   @default("system")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("resonances")
+}
+
+model Challenge {
+  id        String   @id @default(cuid())
+  title     String
+  desc      String?
+  emoji     String?
+  color     String?
+  createdBy String?
+  status    String   @default("active")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  songs Song[]
+
+  @@map("challenges")
+}
+
+model Battle {
+  id        String   @id @default(cuid())
+  topic     String
+  aId       String
+  bId       String
+  aVotes    Int      @default(0)
+  bVotes    Int      @default(0)
+  createdBy String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  songA   Song         @relation("BattleSongA", fields: [aId], references: [id], onDelete: Cascade)
+  songB   Song         @relation("BattleSongB", fields: [bId], references: [id], onDelete: Cascade)
+  creator User         @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  votes   BattleVote[]
+
+  @@map("battles")
+}
+
+model BattleVote {
+  id        String   @id @default(cuid())
+  battleId  String
+  userId    String
+  side      String
+  createdAt DateTime @default(now())
+
+  battle Battle @relation(fields: [battleId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([battleId, userId])
+  @@map("battle_votes")
+}
+
+model RadioTheme {
+  id        String   @id @default(cuid())
+  name      String
+  emoji     String?
+  scene     String?
+  prompt    String
+  style     String?
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("radio_themes")
+}
+
+model Fortune {
+  id            String   @id @default(cuid())
+  userId        String
+  date          String
+  keyword       String
+  mood          Json
+  battery       Int
+  luckyColor    Json
+  luckyNumber   Int
+  peak          String?
+  encourage     String?
+  action        String?
+  dos           Json?
+  donts         Json?
+  recharge      String?
+  img           String?
+  imgGenerating Boolean  @default(false)
+  streak        Int      @default(0)
+  streakBadge   Json?
+  songId        String?
+  songTitle     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  song Song? @relation(fields: [songId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, date])
+  @@map("fortunes")
+}
+
+model Album {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  coverUrl    String?
+  theme       String?
+  authorId    String
+  authorName  String?
+  trackCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  author    User        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  songs     Song[]
+  albumSongs AlbumSong[]
+  aiTasks   AiTask[]
+
+  @@index([authorId])
+  @@map("albums")
+}
+
+model AlbumSong {
+  id        String   @id @default(cuid())
+  albumId   String
+  songId    String
+  order     Int
+  createdAt DateTime @default(now())
+
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  song  Song  @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@unique([albumId, songId])
+  @@map("album_songs")
+}
+
+model RemixRelation {
+  id           String   @id @default(cuid())
+  sourceSongId String
+  newSongId    String
+  type         String
+  createdBy    String?
+  createdAt    DateTime @default(now())
+
+  sourceSong Song  @relation("RemixSource", fields: [sourceSongId], references: [id], onDelete: Cascade)
+  newSong    Song  @relation("RemixTarget", fields: [newSongId], references: [id], onDelete: Cascade)
+  creator    User? @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@map("remix_relations")
+}
+
+model Report {
+  id         String   @id @default(cuid())
+  targetType String
+  targetId   String
+  userId     String
+  reason     String
+  status     String   @default("pending")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("reports")
+}
+
+model AdminLog {
+  id         String   @id @default(cuid())
+  adminId    String
+  action     String
+  targetType String
+  targetId   String
+  detail     Json?
+  createdAt  DateTime @default(now())
+
+  admin User @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@map("admin_logs")
 }

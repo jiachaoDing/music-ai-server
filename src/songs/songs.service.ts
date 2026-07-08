@@ -20,7 +20,7 @@ export class SongsService {
         prompt: dto.style,
         status: 'generated',
         audioUrl: generatedMusic.audioUrl,
-        lyric: dto.lyrics,
+        lyrics: dto.lyrics,
       },
     });
   }
