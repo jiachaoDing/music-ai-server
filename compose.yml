@@ -33,6 +33,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-music_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-music_ai}?schema=public
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
       MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
     ports:
       - "${SERVER_PORT:-3000}:3000"
     command: ["node", "dist/main.js"]
