@@ -14,6 +14,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
 
   server:
     image: ${SERVER_IMAGE:-music-ai-server:local}
