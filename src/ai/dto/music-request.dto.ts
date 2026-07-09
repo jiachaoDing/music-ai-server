@@ -1,22 +1,52 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class MusicRequestDto {
-  @ApiProperty({ example: '毕业那天的风' })
+  @ApiProperty({ example: '夜路微光' })
   @IsString()
   @MinLength(1)
   @MaxLength(80)
   title: string;
 
-  @ApiProperty({ example: '流行, 温暖, 治愈' })
+  @ApiProperty({ example: '流行 / 治愈' })
   @IsString()
   @MinLength(1)
   @MaxLength(120)
   style: string;
 
-  @ApiProperty({ example: '第一段歌词...\n副歌歌词...' })
+  @ApiProperty({ example: '[Verse]\n歌词内容' })
   @IsString()
-  @MinLength(2)
   @MaxLength(3000)
   lyrics: string;
+
+  @ApiPropertyOptional({ example: 'song' })
+  @IsOptional()
+  @IsString()
+  mode?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  prompt?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isInstrumental?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  originId?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  forWho?: string;
 }

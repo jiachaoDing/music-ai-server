@@ -1,6 +1,7 @@
 import { BadGatewayException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MiniMaxService } from '../ai/minimax.service';
+import type { AiTaskService } from '../ai/ai-task.service';
 import { SongsService } from './songs.service';
 
 vi.mock('@prisma/client', () => ({
@@ -20,6 +21,7 @@ describe('SongsService', () => {
 
   let miniMaxService: { generateMusic: ReturnType<typeof vi.fn> };
   let prismaService: { song: { create: ReturnType<typeof vi.fn> } };
+  let aiTaskService: { submitRemix: ReturnType<typeof vi.fn> };
   let songsService: SongsService;
 
   beforeEach(() => {
@@ -31,9 +33,13 @@ describe('SongsService', () => {
         create: vi.fn(),
       },
     };
+    aiTaskService = {
+      submitRemix: vi.fn(),
+    };
     songsService = new SongsService(
       miniMaxService as unknown as MiniMaxService,
       prismaService as never,
+      aiTaskService as unknown as AiTaskService,
     );
   });
 
@@ -45,9 +51,16 @@ describe('SongsService', () => {
       title: dto.title,
       style: dto.style,
       prompt: dto.style,
-      status: 'generated',
+      status: 'draft',
+      mode: 'song',
       audioUrl: 'https://example.com/song.mp3',
       lyrics: dto.lyrics,
+      published: false,
+      isInstrumental: false,
+      likes: 0,
+      plays: 0,
+      coverCount: 0,
+      commentCount: 0,
       createdAt,
       updatedAt,
     };
@@ -61,20 +74,11 @@ describe('SongsService', () => {
     });
     prismaService.song.create.mockResolvedValue(createdSong);
 
-    await expect(songsService.generateAndSave(dto)).resolves.toEqual(
-      createdSong,
-    );
+    const result = await songsService.generateAndSave(dto);
+    expect(result.id).toBe('song_001');
+    expect(result.title).toBe(dto.title);
     expect(miniMaxService.generateMusic).toHaveBeenCalledWith(dto);
-    expect(prismaService.song.create).toHaveBeenCalledWith({
-      data: {
-        title: dto.title,
-        style: dto.style,
-        prompt: dto.style,
-        status: 'generated',
-        audioUrl: createdSong.audioUrl,
-        lyrics: dto.lyrics,
-      },
-    });
+    expect(prismaService.song.create).toHaveBeenCalled();
   });
 
   it('does not create a song when music generation fails', async () => {

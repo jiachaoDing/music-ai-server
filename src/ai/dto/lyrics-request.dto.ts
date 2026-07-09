@@ -1,10 +1,31 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsArray, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class LyricsRequestDto {
-  @ApiProperty({ example: '校园毕业季，温暖流行' })
+  @ApiPropertyOptional({ example: 'song' })
+  @IsOptional()
+  @IsString()
+  mode?: string;
+
+  @ApiProperty({ example: '深夜加班后走在回家路上的释然' })
   @IsString()
   @MinLength(2)
   @MaxLength(300)
   prompt: string;
+
+  @ApiPropertyOptional({ example: ['流行', '治愈'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  styles?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  forWho?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  image?: string;
 }

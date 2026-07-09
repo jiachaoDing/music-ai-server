@@ -1,12 +1,24 @@
 import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
-import { PrismaModule } from '../prisma/prisma.module';
-import { SongsController } from './songs.controller';
+import {
+  MeSongsController,
+  PlayController,
+  PublishController,
+  SongController,
+} from './songs.controller';
+import { SongsController } from './songs-generate.controller';
 import { SongsService } from './songs.service';
 
 @Module({
-  imports: [AiModule, PrismaModule],
-  controllers: [SongsController],
+  imports: [AiModule],
+  controllers: [
+    SongsController,
+    SongController,
+    MeSongsController,
+    PublishController,
+    PlayController,
+  ],
   providers: [SongsService],
+  exports: [SongsService],
 })
 export class SongsModule {}
