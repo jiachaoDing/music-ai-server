@@ -5,7 +5,7 @@ export class UserProfileDto {
   id: string;
 
   @ApiProperty()
-  name: string;
+  nickname: string;
 
   @ApiProperty({ nullable: true })
   avatarUrl: string | null;
@@ -17,7 +17,7 @@ export class UserProfileDto {
   role: string;
 
   @ApiProperty()
-  points: number;
+  echoPoints: number;
 
   @ApiProperty({ nullable: true })
   invitedBy: string | null;

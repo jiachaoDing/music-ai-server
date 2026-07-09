@@ -6,8 +6,13 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import type { User } from '@prisma/client';
+import { User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import {
+  LIKED_PLAYLIST_COLOR,
+  LIKED_PLAYLIST_NAME,
+} from '../common/constants';
+import { mapUser } from '../common/utils/user-mapper';
 import { PrismaService } from '../prisma/prisma.service';
 import { REGISTER_BONUS_POINTS } from './constants';
 import { AuthResponseDto, UserProfileDto } from './dto/auth-response.dto';
@@ -24,7 +29,7 @@ export class AuthService {
 
   async register(dto: RegisterDto): Promise<AuthResponseDto> {
     const existingUser = await this.prisma.user.findUnique({
-      where: { name: dto.name },
+      where: { name: dto.nickname },
     });
     if (existingUser) {
       throw new ConflictException('用户名已存在');
@@ -42,7 +47,7 @@ export class AuthService {
     const user = await this.prisma.$transaction(async (tx) => {
       const created = await tx.user.create({
         data: {
-          name: dto.name,
+          name: dto.nickname,
           passwordHash,
           points: REGISTER_BONUS_POINTS,
           invitedBy: invite.createdBy,
@@ -67,6 +72,16 @@ export class AuthService {
         },
       });
 
+      await tx.playlist.create({
+        data: {
+          userId: created.id,
+          name: LIKED_PLAYLIST_NAME,
+          type: 'liked',
+          isSystem: true,
+          color: LIKED_PLAYLIST_COLOR,
+        },
+      });
+
       return created;
     });
 
@@ -75,7 +90,7 @@ export class AuthService {
 
   async login(dto: LoginDto): Promise<AuthResponseDto> {
     const user = await this.prisma.user.findUnique({
-      where: { name: dto.name },
+      where: { name: dto.nickname },
     });
     if (!user) {
       throw new UnauthorizedException('用户名或密码错误');
@@ -90,7 +105,7 @@ export class AuthService {
   }
 
   logout() {
-    return { message: '已退出登录' };
+    return null;
   }
 
   me(user: User): UserProfileDto {
@@ -115,17 +130,28 @@ export class AuthService {
   }
 
   private toUserProfile(user: User): UserProfileDto {
+    const mapped = mapUser(user);
     return {
-      id: user.id,
-      name: user.name,
-      avatarUrl: user.avatarUrl,
-      color: user.color,
-      role: user.role,
-      points: user.points,
+      ...mapped,
       invitedBy: user.invitedBy,
       lastCheckin: user.lastCheckin,
       streak: user.streak,
-      createdAt: user.createdAt.toISOString(),
     };
+  }
+
+  async validateInviteCode(code: string) {
+    const invite = await this.prisma.inviteCode.findUnique({
+      where: { code },
+    });
+
+    if (!invite) {
+      return { valid: false, used: false, reason: '邀请码不存在' };
+    }
+
+    if (invite.status === 'used') {
+      return { valid: false, used: true, reason: '该邀请码已被使用' };
+    }
+
+    return { valid: true, used: false };
   }
 }

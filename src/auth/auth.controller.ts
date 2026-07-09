@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -47,5 +47,17 @@ export class AuthController {
   @ApiResponse({ status: 200, type: UserProfileDto })
   getMe(@CurrentUser() user: User) {
     return this.authService.me(user);
+  }
+}
+
+@ApiTags('invite-code')
+@Controller('api/invite-code')
+export class InviteCodeController {
+  constructor(private readonly authService: AuthService) {}
+
+  @Get('validate')
+  @ApiOperation({ summary: '验证邀请码' })
+  validate(@Query('code') code: string) {
+    return this.authService.validateInviteCode(code);
   }
 }
