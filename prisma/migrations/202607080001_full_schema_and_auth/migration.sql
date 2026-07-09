@@ -1,8 +1,79 @@
--- AlterTable: expand songs table from initial scaffold
-ALTER TABLE "songs" RENAME COLUMN "lyric" TO "lyrics";
+-- Expand the initial scaffold into the full schema.
+-- This migration is intentionally defensive because some development databases
+-- were already partially updated before Prisma recorded this migration.
+
+-- Remove constraints/indexes that may exist from manual or earlier partial syncs.
+ALTER TABLE IF EXISTS "admin_logs" DROP CONSTRAINT IF EXISTS "admin_logs_adminId_fkey";
+ALTER TABLE IF EXISTS "ai_tasks" DROP CONSTRAINT IF EXISTS "ai_tasks_albumId_fkey";
+ALTER TABLE IF EXISTS "ai_tasks" DROP CONSTRAINT IF EXISTS "ai_tasks_songId_fkey";
+ALTER TABLE IF EXISTS "ai_tasks" DROP CONSTRAINT IF EXISTS "ai_tasks_userId_fkey";
+ALTER TABLE IF EXISTS "album_songs" DROP CONSTRAINT IF EXISTS "album_songs_albumId_fkey";
+ALTER TABLE IF EXISTS "album_songs" DROP CONSTRAINT IF EXISTS "album_songs_songId_fkey";
+ALTER TABLE IF EXISTS "albums" DROP CONSTRAINT IF EXISTS "albums_authorId_fkey";
+ALTER TABLE IF EXISTS "battle_votes" DROP CONSTRAINT IF EXISTS "battle_votes_battleId_fkey";
+ALTER TABLE IF EXISTS "battle_votes" DROP CONSTRAINT IF EXISTS "battle_votes_userId_fkey";
+ALTER TABLE IF EXISTS "battles" DROP CONSTRAINT IF EXISTS "battles_aId_fkey";
+ALTER TABLE IF EXISTS "battles" DROP CONSTRAINT IF EXISTS "battles_bId_fkey";
+ALTER TABLE IF EXISTS "battles" DROP CONSTRAINT IF EXISTS "battles_createdBy_fkey";
+ALTER TABLE IF EXISTS "collects" DROP CONSTRAINT IF EXISTS "collects_playlistId_fkey";
+ALTER TABLE IF EXISTS "collects" DROP CONSTRAINT IF EXISTS "collects_songId_fkey";
+ALTER TABLE IF EXISTS "collects" DROP CONSTRAINT IF EXISTS "collects_userId_fkey";
+ALTER TABLE IF EXISTS "comments" DROP CONSTRAINT IF EXISTS "comments_songId_fkey";
+ALTER TABLE IF EXISTS "comments" DROP CONSTRAINT IF EXISTS "comments_userId_fkey";
+ALTER TABLE IF EXISTS "fortunes" DROP CONSTRAINT IF EXISTS "fortunes_songId_fkey";
+ALTER TABLE IF EXISTS "fortunes" DROP CONSTRAINT IF EXISTS "fortunes_userId_fkey";
+ALTER TABLE IF EXISTS "host_contents" DROP CONSTRAINT IF EXISTS "host_contents_relatedSongId_fkey";
+ALTER TABLE IF EXISTS "invite_codes" DROP CONSTRAINT IF EXISTS "invite_codes_createdBy_fkey";
+ALTER TABLE IF EXISTS "invite_codes" DROP CONSTRAINT IF EXISTS "invite_codes_usedBy_fkey";
+ALTER TABLE IF EXISTS "likes" DROP CONSTRAINT IF EXISTS "likes_songId_fkey";
+ALTER TABLE IF EXISTS "likes" DROP CONSTRAINT IF EXISTS "likes_userId_fkey";
+ALTER TABLE IF EXISTS "playlist_songs" DROP CONSTRAINT IF EXISTS "playlist_songs_playlistId_fkey";
+ALTER TABLE IF EXISTS "playlist_songs" DROP CONSTRAINT IF EXISTS "playlist_songs_songId_fkey";
+ALTER TABLE IF EXISTS "playlists" DROP CONSTRAINT IF EXISTS "playlists_userId_fkey";
+ALTER TABLE IF EXISTS "points_ledger" DROP CONSTRAINT IF EXISTS "points_ledger_userId_fkey";
+ALTER TABLE IF EXISTS "remix_relations" DROP CONSTRAINT IF EXISTS "remix_relations_createdBy_fkey";
+ALTER TABLE IF EXISTS "remix_relations" DROP CONSTRAINT IF EXISTS "remix_relations_newSongId_fkey";
+ALTER TABLE IF EXISTS "remix_relations" DROP CONSTRAINT IF EXISTS "remix_relations_sourceSongId_fkey";
+ALTER TABLE IF EXISTS "reports" DROP CONSTRAINT IF EXISTS "reports_userId_fkey";
+ALTER TABLE IF EXISTS "songs" DROP CONSTRAINT IF EXISTS "songs_albumId_fkey";
+ALTER TABLE IF EXISTS "songs" DROP CONSTRAINT IF EXISTS "songs_authorId_fkey";
+ALTER TABLE IF EXISTS "songs" DROP CONSTRAINT IF EXISTS "songs_challengeId_fkey";
+ALTER TABLE IF EXISTS "songs" DROP CONSTRAINT IF EXISTS "songs_originId_fkey";
+ALTER TABLE IF EXISTS "users" DROP CONSTRAINT IF EXISTS "users_invitedBy_fkey";
+
+DROP INDEX IF EXISTS "ai_tasks_songId_idx";
+DROP INDEX IF EXISTS "battle_votes_userId_idx";
+DROP INDEX IF EXISTS "battles_aId_idx";
+DROP INDEX IF EXISTS "battles_bId_idx";
+DROP INDEX IF EXISTS "battles_status_idx";
+DROP INDEX IF EXISTS "challenges_status_idx";
+DROP INDEX IF EXISTS "collects_playlistId_idx";
+DROP INDEX IF EXISTS "collects_songId_idx";
+DROP INDEX IF EXISTS "comments_userId_idx";
+DROP INDEX IF EXISTS "fortunes_songId_idx";
+DROP INDEX IF EXISTS "invite_codes_createdBy_idx";
+DROP INDEX IF EXISTS "likes_songId_idx";
+DROP INDEX IF EXISTS "playlist_songs_songId_idx";
+DROP INDEX IF EXISTS "songs_challengeId_idx";
+DROP INDEX IF EXISTS "songs_createdAt_idx";
+DROP INDEX IF EXISTS "songs_originId_idx";
+
+-- AlterTable: songs
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'songs' AND column_name = 'lyric'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'songs' AND column_name = 'lyrics'
+  ) THEN
+    ALTER TABLE "songs" RENAME COLUMN "lyric" TO "lyrics";
+  END IF;
+END $$;
+
 ALTER TABLE "songs" ALTER COLUMN "prompt" DROP NOT NULL;
 ALTER TABLE "songs" ALTER COLUMN "status" SET DEFAULT 'draft';
-
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "description" TEXT;
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "keywords" JSONB;
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "mode" TEXT NOT NULL DEFAULT 'song';
@@ -14,7 +85,9 @@ ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "published" BOOLEAN NOT NULL DEFAUL
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "isInstrumental" BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "forWho" TEXT;
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "unlocked" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "songs" ALTER COLUMN "unlocked" SET DEFAULT false;
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "authorId" TEXT;
+ALTER TABLE "songs" ALTER COLUMN "authorId" DROP NOT NULL;
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "authorName" TEXT;
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "authorColor" TEXT;
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "originId" TEXT;
@@ -31,8 +104,8 @@ ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "hostPick" BOOLEAN NOT NULL DEFAULT
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "hostPicked" BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE "songs" ADD COLUMN IF NOT EXISTS "publishedAt" TIMESTAMP(3);
 
--- CreateTable: users
-CREATE TABLE "users" (
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "users" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "passwordHash" TEXT NOT NULL,
@@ -49,8 +122,7 @@ CREATE TABLE "users" (
     CONSTRAINT "users_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: invite_codes
-CREATE TABLE "invite_codes" (
+CREATE TABLE IF NOT EXISTS "invite_codes" (
     "id" TEXT NOT NULL,
     "code" TEXT NOT NULL,
     "createdBy" TEXT NOT NULL,
@@ -62,8 +134,7 @@ CREATE TABLE "invite_codes" (
     CONSTRAINT "invite_codes_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: points_ledger
-CREATE TABLE "points_ledger" (
+CREATE TABLE IF NOT EXISTS "points_ledger" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "delta" INTEGER NOT NULL,
@@ -74,8 +145,7 @@ CREATE TABLE "points_ledger" (
     CONSTRAINT "points_ledger_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: ai_tasks
-CREATE TABLE "ai_tasks" (
+CREATE TABLE IF NOT EXISTS "ai_tasks" (
     "id" TEXT NOT NULL,
     "type" TEXT NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'queued',
@@ -93,8 +163,7 @@ CREATE TABLE "ai_tasks" (
     CONSTRAINT "ai_tasks_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: comments
-CREATE TABLE "comments" (
+CREATE TABLE IF NOT EXISTS "comments" (
     "id" TEXT NOT NULL,
     "songId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
@@ -108,8 +177,7 @@ CREATE TABLE "comments" (
     CONSTRAINT "comments_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: likes
-CREATE TABLE "likes" (
+CREATE TABLE IF NOT EXISTS "likes" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "songId" TEXT NOT NULL,
@@ -117,8 +185,7 @@ CREATE TABLE "likes" (
     CONSTRAINT "likes_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: collects
-CREATE TABLE "collects" (
+CREATE TABLE IF NOT EXISTS "collects" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "songId" TEXT NOT NULL,
@@ -127,8 +194,7 @@ CREATE TABLE "collects" (
     CONSTRAINT "collects_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: playlists
-CREATE TABLE "playlists" (
+CREATE TABLE IF NOT EXISTS "playlists" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -141,8 +207,7 @@ CREATE TABLE "playlists" (
     CONSTRAINT "playlists_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: playlist_songs
-CREATE TABLE "playlist_songs" (
+CREATE TABLE IF NOT EXISTS "playlist_songs" (
     "id" TEXT NOT NULL,
     "playlistId" TEXT NOT NULL,
     "songId" TEXT NOT NULL,
@@ -150,8 +215,7 @@ CREATE TABLE "playlist_songs" (
     CONSTRAINT "playlist_songs_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: host_contents
-CREATE TABLE "host_contents" (
+CREATE TABLE IF NOT EXISTS "host_contents" (
     "id" TEXT NOT NULL,
     "type" TEXT NOT NULL,
     "title" TEXT NOT NULL,
@@ -165,8 +229,7 @@ CREATE TABLE "host_contents" (
     CONSTRAINT "host_contents_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: resonances
-CREATE TABLE "resonances" (
+CREATE TABLE IF NOT EXISTS "resonances" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "reason" TEXT,
@@ -179,8 +242,7 @@ CREATE TABLE "resonances" (
     CONSTRAINT "resonances_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: challenges
-CREATE TABLE "challenges" (
+CREATE TABLE IF NOT EXISTS "challenges" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "desc" TEXT,
@@ -194,8 +256,7 @@ CREATE TABLE "challenges" (
     CONSTRAINT "challenges_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: battles
-CREATE TABLE "battles" (
+CREATE TABLE IF NOT EXISTS "battles" (
     "id" TEXT NOT NULL,
     "topic" TEXT NOT NULL,
     "aId" TEXT NOT NULL,
@@ -209,8 +270,7 @@ CREATE TABLE "battles" (
     CONSTRAINT "battles_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: battle_votes
-CREATE TABLE "battle_votes" (
+CREATE TABLE IF NOT EXISTS "battle_votes" (
     "id" TEXT NOT NULL,
     "battleId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
@@ -219,8 +279,7 @@ CREATE TABLE "battle_votes" (
     CONSTRAINT "battle_votes_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: radio_themes
-CREATE TABLE "radio_themes" (
+CREATE TABLE IF NOT EXISTS "radio_themes" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "emoji" TEXT,
@@ -234,8 +293,7 @@ CREATE TABLE "radio_themes" (
     CONSTRAINT "radio_themes_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: fortunes
-CREATE TABLE "fortunes" (
+CREATE TABLE IF NOT EXISTS "fortunes" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "date" TEXT NOT NULL,
@@ -261,8 +319,7 @@ CREATE TABLE "fortunes" (
     CONSTRAINT "fortunes_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: albums
-CREATE TABLE "albums" (
+CREATE TABLE IF NOT EXISTS "albums" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "description" TEXT,
@@ -276,8 +333,7 @@ CREATE TABLE "albums" (
     CONSTRAINT "albums_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: album_songs
-CREATE TABLE "album_songs" (
+CREATE TABLE IF NOT EXISTS "album_songs" (
     "id" TEXT NOT NULL,
     "albumId" TEXT NOT NULL,
     "songId" TEXT NOT NULL,
@@ -286,8 +342,7 @@ CREATE TABLE "album_songs" (
     CONSTRAINT "album_songs_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: remix_relations
-CREATE TABLE "remix_relations" (
+CREATE TABLE IF NOT EXISTS "remix_relations" (
     "id" TEXT NOT NULL,
     "sourceSongId" TEXT NOT NULL,
     "newSongId" TEXT NOT NULL,
@@ -297,8 +352,7 @@ CREATE TABLE "remix_relations" (
     CONSTRAINT "remix_relations_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: reports
-CREATE TABLE "reports" (
+CREATE TABLE IF NOT EXISTS "reports" (
     "id" TEXT NOT NULL,
     "targetType" TEXT NOT NULL,
     "targetId" TEXT NOT NULL,
@@ -310,8 +364,7 @@ CREATE TABLE "reports" (
     CONSTRAINT "reports_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable: admin_logs
-CREATE TABLE "admin_logs" (
+CREATE TABLE IF NOT EXISTS "admin_logs" (
     "id" TEXT NOT NULL,
     "adminId" TEXT NOT NULL,
     "action" TEXT NOT NULL,
@@ -323,24 +376,24 @@ CREATE TABLE "admin_logs" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "users_name_key" ON "users"("name");
-CREATE UNIQUE INDEX "invite_codes_code_key" ON "invite_codes"("code");
-CREATE UNIQUE INDEX "invite_codes_usedBy_key" ON "invite_codes"("usedBy");
-CREATE INDEX "points_ledger_userId_idx" ON "points_ledger"("userId");
-CREATE INDEX "songs_authorId_idx" ON "songs"("authorId");
-CREATE INDEX "songs_status_idx" ON "songs"("status");
-CREATE INDEX "ai_tasks_userId_idx" ON "ai_tasks"("userId");
-CREATE INDEX "ai_tasks_status_idx" ON "ai_tasks"("status");
-CREATE INDEX "comments_songId_idx" ON "comments"("songId");
-CREATE UNIQUE INDEX "likes_userId_songId_key" ON "likes"("userId", "songId");
-CREATE INDEX "collects_userId_idx" ON "collects"("userId");
-CREATE INDEX "playlists_userId_idx" ON "playlists"("userId");
-CREATE UNIQUE INDEX "playlist_songs_playlistId_songId_key" ON "playlist_songs"("playlistId", "songId");
-CREATE UNIQUE INDEX "battle_votes_battleId_userId_key" ON "battle_votes"("battleId", "userId");
-CREATE UNIQUE INDEX "fortunes_userId_date_key" ON "fortunes"("userId", "date");
-CREATE INDEX "albums_authorId_idx" ON "albums"("authorId");
-CREATE UNIQUE INDEX "album_songs_albumId_songId_key" ON "album_songs"("albumId", "songId");
-CREATE INDEX "reports_status_idx" ON "reports"("status");
+CREATE UNIQUE INDEX IF NOT EXISTS "users_name_key" ON "users"("name");
+CREATE UNIQUE INDEX IF NOT EXISTS "invite_codes_code_key" ON "invite_codes"("code");
+CREATE UNIQUE INDEX IF NOT EXISTS "invite_codes_usedBy_key" ON "invite_codes"("usedBy");
+CREATE INDEX IF NOT EXISTS "points_ledger_userId_idx" ON "points_ledger"("userId");
+CREATE INDEX IF NOT EXISTS "songs_authorId_idx" ON "songs"("authorId");
+CREATE INDEX IF NOT EXISTS "songs_status_idx" ON "songs"("status");
+CREATE INDEX IF NOT EXISTS "ai_tasks_userId_idx" ON "ai_tasks"("userId");
+CREATE INDEX IF NOT EXISTS "ai_tasks_status_idx" ON "ai_tasks"("status");
+CREATE INDEX IF NOT EXISTS "comments_songId_idx" ON "comments"("songId");
+CREATE UNIQUE INDEX IF NOT EXISTS "likes_userId_songId_key" ON "likes"("userId", "songId");
+CREATE INDEX IF NOT EXISTS "collects_userId_idx" ON "collects"("userId");
+CREATE INDEX IF NOT EXISTS "playlists_userId_idx" ON "playlists"("userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "playlist_songs_playlistId_songId_key" ON "playlist_songs"("playlistId", "songId");
+CREATE UNIQUE INDEX IF NOT EXISTS "battle_votes_battleId_userId_key" ON "battle_votes"("battleId", "userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "fortunes_userId_date_key" ON "fortunes"("userId", "date");
+CREATE INDEX IF NOT EXISTS "albums_authorId_idx" ON "albums"("authorId");
+CREATE UNIQUE INDEX IF NOT EXISTS "album_songs_albumId_songId_key" ON "album_songs"("albumId", "songId");
+CREATE INDEX IF NOT EXISTS "reports_status_idx" ON "reports"("status");
 
 -- AddForeignKey
 ALTER TABLE "users" ADD CONSTRAINT "users_invitedBy_fkey" FOREIGN KEY ("invitedBy") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
