@@ -22,6 +22,7 @@ export function mapSong(song: Song, options?: SongMapOptions) {
     audioUrl: locked ? null : song.audioUrl,
     coverUrl: song.coverImg ?? song.cover,
     duration: song.duration,
+    status: song.status,
     published: song.published,
     isInstrumental: song.isInstrumental,
     originId: song.originId,
