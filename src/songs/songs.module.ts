@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
+import { CoverStorageService } from '../common/services/cover-storage.service';
 import {
   MeSongsController,
   PlayController,
@@ -18,7 +19,8 @@ import { SongsService } from './songs.service';
     PublishController,
     PlayController,
   ],
-  providers: [SongsService],
+  providers: [SongsService, CoverStorageService],
   exports: [SongsService],
 })
 export class SongsModule {}
+

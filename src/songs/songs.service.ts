@@ -1,10 +1,11 @@
-import {
+﻿import {
   BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { User } from '@prisma/client';
+import { CoverStorageService } from '../common/services/cover-storage.service';
 import { mapSong } from '../common/utils/song-mapper';
 import { MusicRequestDto } from '../ai/dto/music-request.dto';
 import { MiniMaxService } from '../ai/minimax.service';
@@ -19,6 +20,7 @@ export class SongsService {
     private readonly miniMaxService: MiniMaxService,
     private readonly prisma: PrismaService,
     private readonly aiTaskService: AiTaskService,
+    private readonly coverStorageService: CoverStorageService,
   ) {}
 
   async generateAndSave(dto: MusicRequestDto, user?: User) {
@@ -78,6 +80,10 @@ export class SongsService {
     if (!['draft', 'private', 'generating'].includes(song.status)) {
       throw new BadRequestException('当前状态不可编辑');
     }
+    const coverImg = await this.coverStorageService.persistCover(
+      dto.coverUrl,
+      id,
+    );
     const updated = await this.prisma.song.update({
       where: { id },
       data: {
@@ -85,7 +91,7 @@ export class SongsService {
         description: dto.description,
         lyrics: dto.lyrics,
         tags: dto.tags,
-        coverImg: dto.coverUrl,
+        ...(coverImg !== undefined ? { coverImg } : {}),
       },
     });
     return { song: mapSong(updated) };
@@ -134,3 +140,7 @@ export class SongsService {
     return this.aiTaskService.submitRemix(id, user, dto);
   }
 }
+
+
+
+
