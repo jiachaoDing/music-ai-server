@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { User } from '@prisma/client';
+import { AudioStorageService } from '../common/services/audio-storage.service';
 import { mapSong } from '../common/utils/song-mapper';
 import { mapTask } from '../common/utils/task-mapper';
 import { AdminService } from '../admin/admin.service';
@@ -23,6 +24,7 @@ export class AiTaskService {
     private readonly miniMaxService: MiniMaxService,
     private readonly mockService: AiMockService,
     private readonly adminService: AdminService,
+    private readonly audioStorageService: AudioStorageService,
   ) {}
 
   async generateLyrics(dto: LyricsRequestDto) {
@@ -91,6 +93,10 @@ export class AiTaskService {
       const result = await this.miniMaxService
         .generateMusic(dto)
         .catch(() => this.mockService.generateMusic(dto));
+      const audioUrl = await this.audioStorageService.persistAudio(
+        result.audioUrl,
+        taskId,
+      );
 
       const song = await this.prisma.song.create({
         data: {
@@ -98,7 +104,8 @@ export class AiTaskService {
           style: dto.style,
           prompt: dto.prompt ?? dto.style,
           lyrics: dto.lyrics,
-          audioUrl: result.audioUrl,
+          audioUrl,
+          duration: result.duration ?? 0,
           status: 'draft',
           mode: dto.mode ?? 'song',
           isInstrumental: dto.isInstrumental ?? false,
@@ -234,6 +241,10 @@ export class AiTaskService {
               lyrics: lyrics.lyrics,
             }),
           );
+        const audioUrl = await this.audioStorageService.persistAudio(
+          music.audioUrl,
+          `${album.id}_${i}`,
+        );
 
         const song = await this.prisma.song.create({
           data: {
@@ -241,7 +252,8 @@ export class AiTaskService {
             style: styleText,
             prompt: dto.theme,
             lyrics: lyrics.lyrics,
-            audioUrl: music.audioUrl,
+            audioUrl,
+            duration: music.duration ?? 0,
             status: 'draft',
             mode: 'song',
             albumId: album.id,
@@ -347,13 +359,19 @@ export class AiTaskService {
           }),
         );
 
+      const audioUrl = await this.audioStorageService.persistAudio(
+        music.audioUrl,
+        taskId,
+      );
+
       const song = await this.prisma.song.create({
         data: {
           title,
           style: dto.style,
           prompt: dto.prompt,
           lyrics: dto.lyrics,
-          audioUrl: music.audioUrl,
+          audioUrl,
+          duration: music.duration ?? 0,
           status: 'draft',
           mode: 'remix',
           originId,

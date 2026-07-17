@@ -5,6 +5,7 @@
   NotFoundException,
 } from '@nestjs/common';
 import { User } from '@prisma/client';
+import { AudioStorageService } from '../common/services/audio-storage.service';
 import { CoverStorageService } from '../common/services/cover-storage.service';
 import { mapSong } from '../common/utils/song-mapper';
 import { MusicRequestDto } from '../ai/dto/music-request.dto';
@@ -20,11 +21,16 @@ export class SongsService {
     private readonly miniMaxService: MiniMaxService,
     private readonly prisma: PrismaService,
     private readonly aiTaskService: AiTaskService,
+    private readonly audioStorageService: AudioStorageService,
     private readonly coverStorageService: CoverStorageService,
   ) {}
 
   async generateAndSave(dto: MusicRequestDto, user?: User) {
     const generatedMusic = await this.miniMaxService.generateMusic(dto);
+    const audioUrl = await this.audioStorageService.persistAudio(
+      generatedMusic.audioUrl,
+      `song_${Date.now()}`,
+    );
 
     const song = await this.prisma.song.create({
       data: {
@@ -33,7 +39,7 @@ export class SongsService {
         prompt: dto.style,
         status: 'draft',
         mode: dto.mode ?? 'song',
-        audioUrl: generatedMusic.audioUrl,
+        audioUrl,
         duration: generatedMusic.duration,
         lyrics: dto.lyrics,
         isInstrumental: dto.isInstrumental ?? false,

@@ -1,5 +1,6 @@
 ﻿import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
+import { AudioStorageService } from '../common/services/audio-storage.service';
 import { CoverStorageService } from '../common/services/cover-storage.service';
 import {
   MeSongsController,
@@ -19,7 +20,7 @@ import { SongsService } from './songs.service';
     PublishController,
     PlayController,
   ],
-  providers: [SongsService, CoverStorageService],
+  providers: [SongsService, CoverStorageService, AudioStorageService],
   exports: [SongsService],
 })
 export class SongsModule {}
