@@ -77,12 +77,21 @@ export class MiniMaxService {
         output_format: 'url',
       });
       this.assertProviderSuccess(response.data);
+      const durationMs =
+        (response.data.extra_info as { music_duration?: number } | undefined)
+          ?.music_duration ??
+        (
+          response.data.data as {
+            extra_info?: { music_duration?: number };
+          } | undefined
+        )?.extra_info?.music_duration;
 
       return {
         status: 'generated',
         title: dto.title,
         style: dto.style,
         audioUrl: response.data.data?.audio ?? null,
+        duration: durationMs ? Math.round(durationMs / 1000) : 0,
         providerResponse: response.data,
       };
     } catch (error) {

@@ -34,6 +34,7 @@ export class SongsService {
         status: 'draft',
         mode: dto.mode ?? 'song',
         audioUrl: generatedMusic.audioUrl,
+        duration: generatedMusic.duration,
         lyrics: dto.lyrics,
         isInstrumental: dto.isInstrumental ?? false,
         authorId: user?.id,
