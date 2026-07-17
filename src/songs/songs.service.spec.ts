@@ -2,6 +2,8 @@ import { BadGatewayException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MiniMaxService } from '../ai/minimax.service';
 import type { AiTaskService } from '../ai/ai-task.service';
+import type { AudioStorageService } from '../common/services/audio-storage.service';
+import type { CoverStorageService } from '../common/services/cover-storage.service';
 import { SongsService } from './songs.service';
 
 vi.mock('@prisma/client', () => ({
@@ -22,6 +24,8 @@ describe('SongsService', () => {
   let miniMaxService: { generateMusic: ReturnType<typeof vi.fn> };
   let prismaService: { song: { create: ReturnType<typeof vi.fn> } };
   let aiTaskService: { submitRemix: ReturnType<typeof vi.fn> };
+  let audioStorageService: { persistAudio: ReturnType<typeof vi.fn> };
+  let coverStorageService: { persistCover: ReturnType<typeof vi.fn> };
   let songsService: SongsService;
 
   beforeEach(() => {
@@ -36,10 +40,18 @@ describe('SongsService', () => {
     aiTaskService = {
       submitRemix: vi.fn(),
     };
+    audioStorageService = {
+      persistAudio: vi.fn(),
+    };
+    coverStorageService = {
+      persistCover: vi.fn(),
+    };
     songsService = new SongsService(
       miniMaxService as unknown as MiniMaxService,
       prismaService as never,
       aiTaskService as unknown as AiTaskService,
+      audioStorageService as unknown as AudioStorageService,
+      coverStorageService as unknown as CoverStorageService,
     );
   });
 
@@ -70,15 +82,33 @@ describe('SongsService', () => {
       title: dto.title,
       style: dto.style,
       audioUrl: createdSong.audioUrl,
+      duration: 123,
       providerResponse: {},
     });
+    audioStorageService.persistAudio.mockResolvedValue(createdSong.audioUrl);
     prismaService.song.create.mockResolvedValue(createdSong);
 
     const result = await songsService.generateAndSave(dto);
     expect(result.id).toBe('song_001');
     expect(result.title).toBe(dto.title);
     expect(miniMaxService.generateMusic).toHaveBeenCalledWith(dto);
-    expect(prismaService.song.create).toHaveBeenCalled();
+    expect(audioStorageService.persistAudio).toHaveBeenCalledWith(
+      createdSong.audioUrl,
+      expect.stringMatching(/^song_\d+$/),
+    );
+    expect(prismaService.song.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        title: dto.title,
+        style: dto.style,
+        prompt: dto.style,
+        status: 'draft',
+        mode: 'song',
+        audioUrl: createdSong.audioUrl,
+        duration: 123,
+        lyrics: dto.lyrics,
+        isInstrumental: false,
+      }),
+    });
   });
 
   it('does not create a song when music generation fails', async () => {
