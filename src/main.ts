@@ -10,13 +10,21 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const corsOrigins = process.env.CORS_ORIGIN?.split(',') ?? [];
   app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/',
+    setHeaders: (res) => {
+      res.setHeader(
+        'Access-Control-Allow-Origin',
+        corsOrigins[0]?.trim() || '*',
+      );
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
   });
   app.use(json({ limit: '12mb' }));
   app.use(urlencoded({ extended: true, limit: '12mb' }));
   app.enableCors({
-    origin: process.env.CORS_ORIGIN?.split(',') ?? true,
+    origin: corsOrigins.length ? corsOrigins : true,
   });
   app.useGlobalInterceptors(new TransformInterceptor());
   app.useGlobalFilters(new HttpExceptionFilter());

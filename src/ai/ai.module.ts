@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AdminModule } from '../admin/admin.module';
+import { AudioStorageService } from '../common/services/audio-storage.service';
 import { AiController } from './ai.controller';
 import { AiMockService } from './ai-mock.service';
 import { AiPublicController } from './ai-public.controller';
@@ -10,7 +11,13 @@ import { MiniMaxService } from './minimax.service';
 @Module({
   imports: [AdminModule],
   controllers: [AiController, AiPublicController],
-  providers: [MiniMaxService, AiMockService, AiTaskService, HostService],
+  providers: [
+    MiniMaxService,
+    AiMockService,
+    AiTaskService,
+    HostService,
+    AudioStorageService,
+  ],
   exports: [MiniMaxService, AiTaskService, HostService],
 })
 export class AiModule {}

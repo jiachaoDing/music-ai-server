@@ -26,6 +26,7 @@ export class AiMockService {
       title: dto.title,
       style: dto.style,
       audioUrl: 'https://example.com/mock-audio.mp3',
+      duration: 0,
       mock: true,
     };
   }
