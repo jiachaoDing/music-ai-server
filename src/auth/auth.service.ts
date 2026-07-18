@@ -8,10 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import {
-  LIKED_PLAYLIST_COLOR,
-  LIKED_PLAYLIST_NAME,
-} from '../common/constants';
+import { LIKED_PLAYLIST_COLOR, LIKED_PLAYLIST_NAME } from '../common/constants';
 import { mapUser } from '../common/utils/user-mapper';
 import { PrismaService } from '../prisma/prisma.service';
 import { REGISTER_BONUS_POINTS } from './constants';

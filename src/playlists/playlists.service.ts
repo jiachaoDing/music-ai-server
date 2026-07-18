@@ -4,10 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { User } from '@prisma/client';
-import {
-  LIKED_PLAYLIST_COLOR,
-  LIKED_PLAYLIST_NAME,
-} from '../common/constants';
+import { LIKED_PLAYLIST_COLOR, LIKED_PLAYLIST_NAME } from '../common/constants';
 import { mapPlaylist } from '../common/utils/playlist-mapper';
 import { mapSong } from '../common/utils/song-mapper';
 import { PrismaService } from '../prisma/prisma.service';
@@ -90,7 +87,9 @@ export class PlaylistsService {
 
   async removeSong(playlistId: string, user: User, songId: string) {
     const playlist = await this.ensureOwner(playlistId, user.id);
-    await this.prisma.playlistSong.deleteMany({ where: { playlistId, songId } });
+    await this.prisma.playlistSong.deleteMany({
+      where: { playlistId, songId },
+    });
     if (playlist.songCount > 0) {
       await this.prisma.playlist.update({
         where: { id: playlistId },

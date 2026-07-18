@@ -11,24 +11,33 @@ const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 export class AudioStorageService {
   async persistAudio(audioUrl: string | null | undefined, fileKey: string) {
     if (!audioUrl) return audioUrl;
-    if (!this.isRemoteUrl(audioUrl)) return audioUrl;
 
-    const response = await fetch(audioUrl);
-    if (!response.ok) {
-      throw new BadRequestException('音频下载失败');
+    let bytes: Buffer;
+    let contentType: string;
+
+    if (audioUrl.startsWith('data:')) {
+      const match = audioUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) {
+        throw new BadRequestException('无效的 data URI');
+      }
+      contentType = match[1];
+      bytes = Buffer.from(match[2], 'base64');
+    } else if (this.isRemoteUrl(audioUrl)) {
+      const response = await fetch(audioUrl);
+      if (!response.ok) {
+        throw new BadRequestException('音频下载失败');
+      }
+
+      contentType = response.headers.get('content-type') ?? '';
+      bytes = Buffer.from(await response.arrayBuffer());
+    } else {
+      return audioUrl;
     }
 
-    const contentLength = Number(response.headers.get('content-length') ?? 0);
-    if (contentLength > MAX_AUDIO_BYTES) {
-      throw new BadRequestException('音频文件不能超过 20MB');
-    }
-
-    const contentType = response.headers.get('content-type') ?? '';
     if (!contentType.startsWith('audio/')) {
       throw new BadRequestException('音频地址不是有效音频文件');
     }
 
-    const bytes = Buffer.from(await response.arrayBuffer());
     if (!bytes.length) {
       throw new BadRequestException('音频文件为空');
     }
@@ -55,11 +64,13 @@ export class AudioStorageService {
   }
 
   private resolveExtension(contentType: string, sourceUrl: string) {
-    if (contentType.includes('mpeg') || contentType.includes('mp3')) return '.mp3';
+    if (contentType.includes('mpeg') || contentType.includes('mp3'))
+      return '.mp3';
     if (contentType.includes('wav')) return '.wav';
     if (contentType.includes('ogg')) return '.ogg';
     if (contentType.includes('aac')) return '.aac';
-    if (contentType.includes('mp4') || contentType.includes('m4a')) return '.m4a';
+    if (contentType.includes('mp4') || contentType.includes('m4a'))
+      return '.m4a';
 
     try {
       const extension = extname(new URL(sourceUrl).pathname).toLowerCase();

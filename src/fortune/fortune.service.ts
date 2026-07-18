@@ -137,7 +137,9 @@ export class FortuneService {
     });
     if (existing) return { fortune: mapFortune(existing) };
 
-    await this.adminService.deductPoints(user.id, -1, '时运曲').catch(() => null);
+    await this.adminService
+      .deductPoints(user.id, -1, '时运曲')
+      .catch(() => null);
 
     const keyword = ['温柔', '勇敢', '松弛', '专注', '浪漫'][
       Math.floor(Math.random() * 5)
@@ -201,7 +203,9 @@ export class FortuneService {
       }),
     ]);
 
-    const existingMap = new Map(existingList.map((fortune) => [fortune.date, fortune]));
+    const existingMap = new Map(
+      existingList.map((fortune) => [fortune.date, fortune]),
+    );
 
     return {
       month,
