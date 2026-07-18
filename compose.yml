@@ -35,6 +35,8 @@ services:
       MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+    volumes:
+      - uploads_data:/app/uploads
     ports:
       - "${SERVER_PORT:-3000}:3000"
     command: ["node", "dist/main.js"]
@@ -47,3 +49,4 @@ services:
 
 volumes:
   postgres_data:
+  uploads_data:
