@@ -1,5 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 export class AdminCreateUserDto {
   @ApiProperty()
@@ -61,22 +70,26 @@ export class AdminCreateInviteDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(50)
   count?: number;
 }
 
 export class AdminCreateTopicDto {
   @ApiProperty()
   @IsString()
+  @MaxLength(30)
   title: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(80)
   desc?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(4)
   emoji?: string;
 
   @ApiPropertyOptional()
@@ -89,12 +102,20 @@ export class AdminUpdateTopicDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(30)
   title?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(80)
   desc?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(4)
+  emoji?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -103,5 +124,6 @@ export class AdminUpdateTopicDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @IsBoolean()
   active?: boolean;
 }
