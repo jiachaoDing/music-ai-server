@@ -23,12 +23,12 @@ export function mapTask(task: AiTask, song?: Song | null) {
     queueAhead: task.queueAhead ?? 0,
     result:
       task.status === 'done'
-        ? result ??
+        ? (result ??
           (song
             ? {
                 song: mapSong(song),
               }
-            : null)
+            : null))
         : result,
     error: task.status === 'error' ? parsedError : null,
   };

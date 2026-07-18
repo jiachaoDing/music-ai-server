@@ -139,7 +139,10 @@ export class AdminService {
     if (balance < 0) throw new BadRequestException('积分不足');
 
     return this.prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: userId }, data: { points: balance } });
+      await tx.user.update({
+        where: { id: userId },
+        data: { points: balance },
+      });
       await tx.pointsLedger.create({
         data: { userId, delta, reason, balance },
       });

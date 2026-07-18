@@ -61,7 +61,10 @@ export class BattlesService {
       });
       return tx.battle.update({
         where: { id: battleId },
-        data: side === 'A' ? { aVotes: { increment: 1 } } : { bVotes: { increment: 1 } },
+        data:
+          side === 'A'
+            ? { aVotes: { increment: 1 } }
+            : { bVotes: { increment: 1 } },
       });
     });
 

@@ -3,7 +3,20 @@ import { LyricsRequestDto } from './dto/lyrics-request.dto';
 import { MusicRequestDto } from './dto/music-request.dto';
 import { CoverRequestDto } from './dto/cover-request.dto';
 
-const STYLE_TAGS = ['流行', '国风', '抒情', '电子', '摇滚', '民谣', '说唱', '爵士', '治愈', '欢快', '伤感', 'Lo-fi'];
+const STYLE_TAGS = [
+  '流行',
+  '国风',
+  '抒情',
+  '电子',
+  '摇滚',
+  '民谣',
+  '说唱',
+  '爵士',
+  '治愈',
+  '欢快',
+  '伤感',
+  'Lo-fi',
+];
 
 @Injectable()
 export class AiMockService {

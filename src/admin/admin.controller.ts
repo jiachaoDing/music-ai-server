@@ -69,7 +69,9 @@ function normalizeKeyword(q?: string) {
 
 function randomHexPassword() {
   return Array.from({ length: 6 }, () =>
-    Math.floor(Math.random() * 16).toString(16).toUpperCase(),
+    Math.floor(Math.random() * 16)
+      .toString(16)
+      .toUpperCase(),
   ).join('');
 }
 
@@ -87,24 +89,27 @@ async function removeLocalFile(url: string | null | undefined) {
   await unlink(target).catch(() => null);
 }
 
-function mapAdminUserRow(user: {
-  id: string;
-  name: string;
-  avatarUrl: string | null;
-  color: string | null;
-  points: number;
-  streak: number;
-  lastCheckin: string | null;
-  invitedBy: string | null;
-  createdAt: Date;
-  pointsLedger: Array<{
-    delta: number;
-    reason: string;
-    balance: number | null;
+function mapAdminUserRow(
+  user: {
+    id: string;
+    name: string;
+    avatarUrl: string | null;
+    color: string | null;
+    points: number;
+    streak: number;
+    lastCheckin: string | null;
+    invitedBy: string | null;
     createdAt: Date;
-  }>;
-  _count?: { songs: number };
-}, invitedByName?: string | null) {
+    pointsLedger: Array<{
+      delta: number;
+      reason: string;
+      balance: number | null;
+      createdAt: Date;
+    }>;
+    _count?: { songs: number };
+  },
+  invitedByName?: string | null,
+) {
   return {
     id: user.id,
     nickname: user.name,
@@ -322,7 +327,10 @@ export class AdminController {
 
     return {
       list: users.map((user) =>
-        mapAdminUserRow(user, user.invitedBy ? nameById.get(user.invitedBy) : null),
+        mapAdminUserRow(
+          user,
+          user.invitedBy ? nameById.get(user.invitedBy) : null,
+        ),
       ),
       total,
       page,
@@ -394,9 +402,7 @@ export class AdminController {
     const passwordHash = await bcrypt.hash(password, 10);
     await this.prisma.user.update({ where: { id }, data: { passwordHash } });
 
-    return provided
-      ? { reset: true }
-      : { reset: true, newPassword: password };
+    return provided ? { reset: true } : { reset: true, newPassword: password };
   }
 
   @Delete('users/:id')
@@ -420,7 +426,9 @@ export class AdminController {
         ? {
             OR: [
               { title: { contains: keyword, mode: 'insensitive' as const } },
-              { authorName: { contains: keyword, mode: 'insensitive' as const } },
+              {
+                authorName: { contains: keyword, mode: 'insensitive' as const },
+              },
             ],
           }
         : {}),
@@ -446,7 +454,10 @@ export class AdminController {
 
   @Delete('songs/:id')
   @ApiOperation({ summary: '删除作品' })
-  async deleteSong(@Param('id') id: string, @Body() body?: { reason?: string }) {
+  async deleteSong(
+    @Param('id') id: string,
+    @Body() body?: { reason?: string },
+  ) {
     const root = await this.prisma.song.findUnique({ where: { id } });
     if (!root) throw new NotFoundException('作品不存在');
 
@@ -523,9 +534,7 @@ export class AdminController {
     const codes: string[] = [];
     for (let index = 0; index < count; index += 1) {
       const code =
-        dto.code && count === 1
-          ? dto.code
-          : `ECHO-${randomHexPassword()}`;
+        dto.code && count === 1 ? dto.code : `ECHO-${randomHexPassword()}`;
       await this.prisma.inviteCode.create({
         data: { code, createdBy: admin.id, status: 'unused' },
       });

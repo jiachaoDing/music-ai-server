@@ -1,10 +1,24 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { User } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminService } from '../admin/admin.service';
+import { AudioStorageService } from '../common/services/audio-storage.service';
+import { mapSong } from '../common/utils/song-mapper';
+import { PrismaService } from '../prisma/prisma.service';
 import { AiTaskService } from './ai-task.service';
 import { HostService } from './host.service';
+import { MiniMaxService } from './minimax.service';
 import { AlbumRequestDto } from './dto/album-request.dto';
 import { LyricsRequestDto } from './dto/lyrics-request.dto';
 import { MusicRequestDto } from './dto/music-request.dto';
@@ -15,6 +29,10 @@ export class AiPublicController {
   constructor(
     private readonly aiTaskService: AiTaskService,
     private readonly hostService: HostService,
+    private readonly miniMaxService: MiniMaxService,
+    private readonly prisma: PrismaService,
+    private readonly adminService: AdminService,
+    private readonly audioStorageService: AudioStorageService,
   ) {}
 
   @Post('lyrics')
@@ -69,7 +87,7 @@ export class AiPublicController {
 
   @Get('radio')
   @ApiOperation({ summary: '电台主题数据' })
-  getRadio() {
+  async getRadio() {
     return this.hostService.getRadio();
   }
 
@@ -93,5 +111,122 @@ export class AiPublicController {
   @ApiOperation({ summary: '获取专辑详情' })
   getAlbum(@Param('id') id: string) {
     return this.aiTaskService.getAlbumById(id);
+  }
+
+  @Post('song/:id/review')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'AI 乐评' })
+  async generateReview(@Param('id') id: string) {
+    const song = await this.prisma.song.findUnique({ where: { id } });
+    if (!song) throw new NotFoundException('作品不存在');
+
+    const review = await this.miniMaxService
+      .generateReview({
+        title: song.title,
+        style: song.style,
+        lyrics: song.lyrics || undefined,
+      })
+      .catch(() => ({
+        text: `🤖 《${song.title}》—— 一首值得循环的${song.style}风格作品。`,
+      }));
+
+    await this.prisma.song.update({
+      where: { id },
+      data: { review: review.text },
+    });
+
+    return review;
+  }
+
+  @Post('song/:id/publish-copy')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'AI 发布文案' })
+  async generatePublishCopy(@Param('id') id: string) {
+    const song = await this.prisma.song.findUnique({ where: { id } });
+    if (!song) throw new NotFoundException('作品不存在');
+
+    const result = await this.miniMaxService
+      .generatePublishCopy({
+        title: song.title,
+        style: song.style,
+        lyrics: song.lyrics || undefined,
+      })
+      .catch(() => ({
+        description: `分享一首我创作的${song.style}风格歌曲《${song.title}》，希望你喜欢！`,
+        tags: song.style
+          .split('/')
+          .map((s) => s.trim())
+          .slice(0, 3),
+      }));
+
+    await this.prisma.song.update({
+      where: { id },
+      data: { description: result.description, tags: result.tags },
+    });
+
+    return result;
+  }
+
+  @Post('radio/generate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '电台纯音乐生成' })
+  async generateRadioMusic(
+    @Body() body: { themeId: string },
+    @CurrentUser() user: User,
+  ) {
+    await this.adminService.deductPoints(user.id, -1, '电台纯音乐');
+
+    const theme = await this.prisma.radioTheme.findUnique({
+      where: { id: body.themeId },
+    });
+
+    if (!theme) {
+      throw new NotFoundException('电台主题不存在');
+    }
+
+    const music = await this.miniMaxService
+      .generateMusic({
+        title: `${theme.name} · AI即兴`,
+        style: theme.prompt,
+        lyrics: '',
+        isInstrumental: true,
+      })
+      .catch(() => ({
+        status: 'generated' as const,
+        title: `${theme.name} · AI即兴`,
+        style: theme.name,
+        audioUrl: 'https://example.com/mock-radio.mp3',
+        duration: 180,
+      }));
+
+    const audioUrl = await this.audioStorageService.persistAudio(
+      music.audioUrl,
+      `radio_${body.themeId}_${Date.now()}`,
+    );
+
+    const song = await this.prisma.song.create({
+      data: {
+        title: `${theme.name} · AI即兴`,
+        style: theme.name,
+        audioUrl,
+        duration: music.duration ?? 180,
+        mode: 'radio',
+        isInstrumental: true,
+        authorId: user.id,
+        authorName: user.name,
+        authorColor: user.color,
+      },
+    });
+
+    return { song: mapSong(song) };
+  }
+
+  @Get('radio/refresh')
+  @ApiOperation({ summary: '换一批电台主题' })
+  refreshRadio() {
+    return this.hostService.getRadio();
   }
 }

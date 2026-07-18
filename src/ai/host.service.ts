@@ -2,23 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { mapSong, mapSongBrief } from '../common/utils/song-mapper';
 import { PrismaService } from '../prisma/prisma.service';
 
-const RADIO_THEMES = [
-  { id: 'radio_rain', emoji: '🌧', name: '深夜雨声', prompt: 'Lo-fi, rainy night, calm, chill, study beats' },
-  { id: 'radio_coffee', emoji: '☕️', name: '清晨咖啡', prompt: 'warm jazz, morning coffee, relaxing, soft piano' },
-  { id: 'radio_work', emoji: '💻', name: '专注工作', prompt: 'ambient, focus, minimal, steady, concentration' },
-  { id: 'radio_space', emoji: '🪐', name: '宇宙漫游', prompt: 'cinematic space ambient, dreamy, ethereal, synth' },
-  { id: 'radio_heal', emoji: '🌿', name: '解压治愈', prompt: 'healing, soft pad, meditation, peaceful, nature' },
-  { id: 'radio_fire', emoji: '🔥', name: '燃起来', prompt: 'epic electronic, energetic, workout, driving beat' },
-  { id: 'radio_forest', emoji: '🌲', name: '雨后森林', prompt: 'forest ambient, birdsong, calm, organic, natural' },
-  { id: 'radio_city', emoji: '🌃', name: '城市夜景', prompt: 'synthwave, city night, neon, retro, cruising' },
-  { id: 'radio_lazy', emoji: '🛋', name: '午后慵懒', prompt: 'bossa nova, lazy afternoon, warm, mellow, cozy' },
-  { id: 'radio_sunset', emoji: '🌅', name: '海边日落', prompt: 'tropical chill, sunset, beach, soft guitar, breezy' },
-  { id: 'radio_retro', emoji: '📼', name: '复古胶片', prompt: 'vintage lo-fi, vinyl, nostalgic, warm tape, retro' },
-  { id: 'radio_sleep', emoji: '😴', name: '安睡入眠', prompt: 'sleep ambient, soft drone, gentle, dreamy, slow' },
-  { id: 'radio_fireplace', emoji: '🪵', name: '雪夜炉火', prompt: 'cozy piano, winter night, fireplace, warm, intimate' },
-  { id: 'radio_energy', emoji: '🌈', name: '元气满满', prompt: 'happy ukulele, upbeat, sunny, cheerful, light pop' },
-];
-
 const TIME_SLOTS: Record<string, string> = {
   '0-5': 'radio_sleep',
   '5-9': 'radio_coffee',
@@ -35,7 +18,7 @@ export class HostService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getHostPage() {
-    const [featuredSong, topics, featuredSongs] = await Promise.all([
+    const [featuredSong, topics, featuredSongs, stats] = await Promise.all([
       this.prisma.song.findFirst({
         where: { hostPick: true, published: true },
         orderBy: { createdAt: 'desc' },
@@ -50,13 +33,28 @@ export class HostService {
         take: 5,
         orderBy: { createdAt: 'desc' },
       }),
+      this.prisma.song.aggregate({
+        _count: { id: true },
+        _sum: { likes: true, plays: true },
+        where: { hostPick: true },
+      }),
     ]);
 
     return {
       name: 'Echo 主理人',
       avatarUrl: '/images/host.png',
       bio: '负责推荐灵感、策展作品和维护社区氛围',
-      todayPick: featuredSong ? mapSong(featuredSong) : null,
+      stats: {
+        featuredCount: featuredSongs.length,
+        totalLikes: stats._sum.likes || 0,
+        totalPlays: stats._sum.plays || 0,
+      },
+      todayPick: featuredSong
+        ? {
+            ...mapSong(featuredSong),
+            quote: this.generatePickQuote(featuredSong.title),
+          }
+        : null,
       topics: topics.map((t) => ({
         id: t.id,
         title: t.title,
@@ -65,6 +63,17 @@ export class HostService {
       featuredSongs: featuredSongs.map((s) => mapSong(s)),
       greeting: this.buildGreeting(),
     };
+  }
+
+  private generatePickQuote(title: string): string {
+    const quotes = [
+      `「${title}」—— 今日最想分享的声音。`,
+      `循环播放中：${title}`,
+      `这一首，送给此刻的你。《${title}》`,
+      `今日翻牌：${title}，希望你喜欢。`,
+      `🎧 ${title} · 主理人推荐`,
+    ];
+    return quotes[Math.floor(Math.random() * quotes.length)];
   }
 
   async getCuration() {
@@ -95,17 +104,19 @@ export class HostService {
     const list = await this.prisma.challenge.findMany({
       where: { active: true, status: 'active' },
       orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { songs: true } } },
     });
     return {
       list: list.map((c) => ({
         id: c.id,
         title: c.title,
         prompt: c.desc,
+        songCount: c._count.songs,
       })),
     };
   }
 
-  getRadio() {
+  async getRadio() {
     const hour = new Date().getHours();
     const currentId =
       hour < 5
@@ -124,13 +135,26 @@ export class HostService {
                     ? 'radio_city'
                     : 'radio_rain';
 
-    const currentTheme = RADIO_THEMES.find((t) => t.id === currentId)!;
+    const themes = await this.prisma.radioTheme.findMany({
+      where: { active: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+
+    let currentTheme = themes.find((t) => t.id === currentId);
+    if (!currentTheme) {
+      currentTheme = themes[0] || {
+        id: currentId,
+        name: '深夜雨声',
+        emoji: '🌧',
+        prompt: 'Lo-fi, rainy night, calm, chill, study beats',
+      };
+    }
 
     return {
       greeting: `${this.buildGreeting()} AI 即兴生成专属纯音乐`,
       live: true,
       current: { ...currentTheme, isNowRecommend: true },
-      themes: RADIO_THEMES,
+      themes,
       timeSlots: TIME_SLOTS,
     };
   }

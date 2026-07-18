@@ -29,17 +29,17 @@ export class AiTaskService {
 
   async generateLyrics(dto: LyricsRequestDto) {
     try {
-      const result = await this.miniMaxService.generateLyrics({
-        prompt: dto.prompt,
-      });
+      const result = await this.miniMaxService.generateLyrics(dto);
       const styles = dto.styles?.length
         ? dto.styles
         : [result.style ?? '流行', '治愈'];
       return {
         title: result.title,
         styles,
+        style: result.style,
         lyrics: result.lyrics,
         tags: styles.slice(0, 3),
+        rawText: result.rawText,
       };
     } catch {
       return this.mockService.generateLyrics(dto);
@@ -60,13 +60,11 @@ export class AiTaskService {
         type: 'generate',
         status: 'queued',
         stage:
-          queueAhead > 0
-            ? `排队中（前面还有 ${queueAhead} 个）`
-            : '排队中',
+          queueAhead > 0 ? `排队中（前面还有 ${queueAhead} 个）` : '排队中',
         progress: 10,
         queueAhead,
         userId: user.id,
-        input: dto as object,
+        input: JSON.parse(JSON.stringify(dto)),
       },
     });
 
@@ -125,7 +123,7 @@ export class AiTaskService {
           progress: 100,
           stage: '生成完成',
           songId: song.id,
-          result: { song: mapSong(song) } as object,
+          result: { song: mapSong(song) },
         },
       });
 
@@ -171,7 +169,7 @@ export class AiTaskService {
         progress: 5,
         queueAhead: 0,
         userId: user.id,
-        input: dto as object,
+        input: JSON.parse(JSON.stringify(dto)),
       },
     });
 
@@ -218,7 +216,7 @@ export class AiTaskService {
                 status: 'done',
                 duration: s.duration,
               })),
-            } as object,
+            },
           },
         });
 
@@ -285,7 +283,7 @@ export class AiTaskService {
               createdAt: album.createdAt.toISOString(),
             },
             songs,
-          } as object,
+          },
         },
       });
     } catch (error) {
@@ -296,8 +294,7 @@ export class AiTaskService {
           stage: '专辑制作失败',
           error: JSON.stringify({
             code: 600,
-            message:
-              error instanceof Error ? error.message : '专辑制作失败',
+            message: error instanceof Error ? error.message : '专辑制作失败',
           }),
         },
       });
@@ -323,11 +320,17 @@ export class AiTaskService {
         stage: '翻唱任务排队中',
         progress: 10,
         userId: user.id,
-        input: { originId, ...dto } as object,
+        input: { originId, ...dto },
       },
     });
 
-    void this.processRemixTask(task.id, originId, user, dto, originalSong.title);
+    void this.processRemixTask(
+      task.id,
+      originId,
+      user,
+      dto,
+      originalSong.title,
+    );
     return { taskId: task.id };
   }
 
@@ -402,7 +405,7 @@ export class AiTaskService {
           progress: 100,
           stage: '翻唱完成',
           songId: song.id,
-          result: { song: mapSong(song) } as object,
+          result: { song: mapSong(song) },
         },
       });
     } catch (error) {
@@ -423,12 +426,25 @@ export class AiTaskService {
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
     if (!song) throw new NotFoundException('作品不存在');
 
-    const dj = this.mockService.generateDjText(song.title);
+    const djText = this.mockService.generateDjText(song.title).text;
+
+    let djUrl: string | null = null;
+    try {
+      const ttsUrl = await this.miniMaxService.generateTts(djText);
+      if (ttsUrl) {
+        const persistedUrl = await this.audioStorageService.persistAudio(
+          ttsUrl,
+          `dj_${songId}`,
+        );
+        djUrl = persistedUrl ?? null;
+      }
+    } catch {}
+
     await this.prisma.song.update({
       where: { id: songId },
-      data: { djText: dj.text, djUrl: dj.audioUrl },
+      data: { djText, djUrl },
     });
-    return dj;
+    return { text: djText, audioUrl: djUrl };
   }
 
   async getAlbumById(id: string) {

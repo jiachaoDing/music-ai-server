@@ -78,7 +78,9 @@ export class SongsService {
       throw new ForbiddenException('无权查看该作品');
     }
 
-    const collectCount = await this.prisma.collect.count({ where: { songId: id } });
+    const collectCount = await this.prisma.collect.count({
+      where: { songId: id },
+    });
     return { song: mapSong(song, { collectCount }) };
   }
 
@@ -135,7 +137,8 @@ export class SongsService {
   private async getOwnedSong(id: string, userId: string) {
     const song = await this.prisma.song.findUnique({ where: { id } });
     if (!song) throw new NotFoundException('作品不存在');
-    if (song.authorId !== userId) throw new ForbiddenException('无权操作该作品');
+    if (song.authorId !== userId)
+      throw new ForbiddenException('无权操作该作品');
     return song;
   }
 
@@ -147,7 +150,3 @@ export class SongsService {
     return this.aiTaskService.submitRemix(id, user, dto);
   }
 }
-
-
-
-
