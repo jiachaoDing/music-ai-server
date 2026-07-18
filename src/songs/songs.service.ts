@@ -8,6 +8,7 @@ import { User } from '@prisma/client';
 import { AudioStorageService } from '../common/services/audio-storage.service';
 import { CoverStorageService } from '../common/services/cover-storage.service';
 import { mapSong } from '../common/utils/song-mapper';
+import { assertChallengeJoinable } from '../common/utils/challenge-utils';
 import { MusicRequestDto } from '../ai/dto/music-request.dto';
 import { MiniMaxService } from '../ai/minimax.service';
 import { AiTaskService } from '../ai/ai-task.service';
@@ -26,6 +27,8 @@ export class SongsService {
   ) {}
 
   async generateAndSave(dto: MusicRequestDto, user?: User) {
+    await assertChallengeJoinable(this.prisma, dto.challengeId);
+
     const generatedMusic = await this.miniMaxService.generateMusic(dto);
     const audioUrl = await this.audioStorageService.persistAudio(
       generatedMusic.audioUrl,
@@ -46,6 +49,7 @@ export class SongsService {
         authorId: user?.id,
         authorName: user?.name,
         authorColor: user?.color,
+        challengeId: dto.challengeId ?? null,
       },
     });
 

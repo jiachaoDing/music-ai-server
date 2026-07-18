@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { User } from '@prisma/client';
 import { AudioStorageService } from '../common/services/audio-storage.service';
+import { assertChallengeJoinable } from '../common/utils/challenge-utils';
 import { mapSong } from '../common/utils/song-mapper';
 import { mapTask } from '../common/utils/task-mapper';
 import { AdminService } from '../admin/admin.service';
@@ -47,6 +48,8 @@ export class AiTaskService {
   }
 
   async submitGenerate(dto: MusicRequestDto, user: User) {
+    await assertChallengeJoinable(this.prisma, dto.challengeId);
+
     if (user) {
       await this.adminService.deductPoints(user.id, -GENERATE_COST, '生成歌曲');
     }
@@ -109,6 +112,7 @@ export class AiTaskService {
           isInstrumental: dto.isInstrumental ?? false,
           originId: dto.originId ?? undefined,
           forWho: dto.forWho,
+          challengeId: dto.challengeId ?? null,
           unlocked: dto.mode !== 'foryou',
           authorId: user.id,
           authorName: user.name,

@@ -23,6 +23,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { getAdminKey } from '../common/utils/admin-key';
+import { publishedChallengeSongCountInclude } from '../common/utils/challenge-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { AdminService } from './admin.service';
 import {
@@ -672,7 +673,7 @@ export class AdminController {
   async listTopics() {
     const challenges = await this.prisma.challenge.findMany({
       orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { songs: true } } },
+      include: publishedChallengeSongCountInclude,
     });
     return { list: challenges.map(mapAdminChallengeRow) };
   }
@@ -694,7 +695,7 @@ export class AdminController {
         createdBy: '管理员',
         active: true,
       },
-      include: { _count: { select: { songs: true } } },
+      include: publishedChallengeSongCountInclude,
     });
     return { challenge: mapAdminChallengeRow(challenge) };
   }
@@ -711,7 +712,7 @@ export class AdminController {
         status: dto.status,
         active: dto.active,
       },
-      include: { _count: { select: { songs: true } } },
+      include: publishedChallengeSongCountInclude,
     });
     return { challenge: mapAdminChallengeRow(challenge) };
   }
