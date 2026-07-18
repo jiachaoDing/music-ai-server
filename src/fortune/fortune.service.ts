@@ -91,6 +91,45 @@ export class FortuneService {
     return new Date().toISOString().slice(0, 10);
   }
 
+  private getMonthDates(month: string): string[] {
+    const [year, mon] = month.split('-').map(Number);
+    const daysInMonth = new Date(year, mon, 0).getDate();
+    return Array.from({ length: daysInMonth }, (_, index) => {
+      const day = String(index + 1).padStart(2, '0');
+      return `${month}-${day}`;
+    });
+  }
+
+  private createPlaceholderFortune(userId: string, date: string) {
+    return mapFortune({
+      id: `placeholder_${date}`,
+      userId,
+      date,
+      keyword: '待打卡',
+      mood: {
+        emoji: '○',
+        name: '待开启',
+        color: 'linear-gradient(135deg,#e5e7eb,#d1d5db)',
+        stylePrompt: '',
+      },
+      battery: 0,
+      luckyColor: { name: '灰', hex: '#d1d5db' },
+      luckyNumber: 0,
+      peak: '',
+      encourage: '',
+      action: '',
+      dos: [],
+      donts: [],
+      recharge: '',
+      img: '',
+      imgGenerating: false,
+      streak: 0,
+      songId: null,
+      songTitle: null,
+      createdAt: new Date(`${date}T00:00:00.000Z`),
+    });
+  }
+
   async getDayFortune(user: User) {
     const date = this.today();
     const existing = await this.prisma.fortune.findUnique({
@@ -147,13 +186,14 @@ export class FortuneService {
   }
 
   async getFortunes(user: User, month: string) {
-    const [list, currentUser] = await Promise.all([
+    const dates = this.getMonthDates(month);
+
+    const [existingList, currentUser] = await Promise.all([
       this.prisma.fortune.findMany({
         where: {
           userId: user.id,
           date: { startsWith: month },
         },
-        orderBy: { date: 'asc' },
       }),
       this.prisma.user.findUnique({
         where: { id: user.id },
@@ -161,10 +201,17 @@ export class FortuneService {
       }),
     ]);
 
+    const existingMap = new Map(existingList.map((fortune) => [fortune.date, fortune]));
+
     return {
       month,
       streak: currentUser?.streak ?? 0,
-      list: list.map(mapFortune),
+      list: dates.map((date) => {
+        const record = existingMap.get(date);
+        return record
+          ? mapFortune(record)
+          : this.createPlaceholderFortune(user.id, date);
+      }),
     };
   }
 }
