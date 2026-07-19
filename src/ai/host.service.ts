@@ -1,4 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  mapChallengeListItem,
+  publishedChallengeSongCountInclude,
+  PUBLISHED_CHALLENGE_SONG_WHERE,
+} from '../common/utils/challenge-utils';
 import { mapSong, mapSongBrief } from '../common/utils/song-mapper';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -104,15 +109,69 @@ export class HostService {
     const list = await this.prisma.challenge.findMany({
       where: { active: true, status: 'active' },
       orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { songs: true } } },
+      include: publishedChallengeSongCountInclude,
     });
     return {
-      list: list.map((c) => ({
-        id: c.id,
-        title: c.title,
-        prompt: c.desc,
-        songCount: c._count.songs,
+      list: list.map(mapChallengeListItem),
+    };
+  }
+
+  async getChallengeDetail(challengeId: string) {
+    const challenge = await this.prisma.challenge.findUnique({
+      where: { id: challengeId },
+      include: publishedChallengeSongCountInclude,
+    });
+
+    if (!challenge) {
+      throw new NotFoundException('话题不存在');
+    }
+
+    const songs = await this.prisma.song.findMany({
+      where: {
+        challengeId,
+        ...PUBLISHED_CHALLENGE_SONG_WHERE,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const participantMap = new Map<
+      string,
+      { id: string; nickname: string; songCount: number }
+    >();
+
+    for (const song of songs) {
+      if (!song.authorId) continue;
+
+      const existing = participantMap.get(song.authorId);
+      if (existing) {
+        existing.songCount += 1;
+        continue;
+      }
+
+      participantMap.set(song.authorId, {
+        id: song.authorId,
+        nickname: song.authorName ?? '创作者',
+        songCount: 1,
+      });
+    }
+
+    return {
+      challenge: mapChallengeListItem(challenge),
+      songs: songs.map((song) => ({
+        id: song.id,
+        title: song.title,
+        style: song.style,
+        audioUrl: song.audioUrl,
+        coverUrl: song.coverImg ?? song.cover,
+        author: song.authorId
+          ? {
+              id: song.authorId,
+              nickname: song.authorName ?? '创作者',
+            }
+          : null,
+        createdAt: song.createdAt.toISOString(),
       })),
+      participants: Array.from(participantMap.values()),
     };
   }
 

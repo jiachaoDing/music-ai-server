@@ -85,6 +85,12 @@ export class AiPublicController {
     return this.hostService.getChallenges();
   }
 
+  @Get('challenges/:id')
+  @ApiOperation({ summary: '话题挑战详情' })
+  getChallengeDetail(@Param('id') id: string) {
+    return this.hostService.getChallengeDetail(id);
+  }
+
   @Get('radio')
   @ApiOperation({ summary: '电台主题数据' })
   async getRadio() {

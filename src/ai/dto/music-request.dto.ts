@@ -49,4 +49,11 @@ export class MusicRequestDto {
   @IsOptional()
   @IsString()
   forWho?: string;
+
+  @ApiPropertyOptional({
+    description: '参与的话题挑战 ID',
+  })
+  @IsOptional()
+  @IsString()
+  challengeId?: string;
 }
