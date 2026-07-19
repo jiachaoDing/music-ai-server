@@ -22,13 +22,14 @@ const STYLE_TAGS = [
 export class AiMockService {
   generateLyrics(dto: LyricsRequestDto) {
     const styles = dto.styles?.length ? dto.styles : ['流行', '治愈'];
+    const prompt = dto.prompt || '未命名';
     return {
-      title: `《${dto.prompt.slice(0, 12)}》`,
+      title: `《${prompt.slice(0, 12)}》`,
       styles,
       style: styles.join(' / '),
-      lyrics: `[Verse]\n关于「${dto.prompt}」的歌词\n[Chorus]\n回声在此回响`,
+      lyrics: `[Verse]\n关于「${prompt}」的歌词\n[Chorus]\n回声在此回响`,
       tags: styles.slice(0, 3),
-      rawText: dto.prompt,
+      rawText: prompt,
       mock: true,
     };
   }

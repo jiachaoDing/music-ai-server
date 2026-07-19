@@ -29,6 +29,21 @@ const MODE_PROMPTS: Record<string, string> = {
     '你是浪漫音乐人，擅长创作送给特定对象的专属歌曲，歌词要饱含深情和故事感，适合表白和纪念。',
 };
 
+const STYLE_VOICE_MAP: Record<string, { voice_id: string; speed: number }> = {
+  '抒情': { voice_id: 'female-qingse', speed: 0.85 },
+  '治愈': { voice_id: 'female-qingse', speed: 0.9 },
+  'Lo-fi': { voice_id: 'male-qn-qingse', speed: 0.9 },
+  '民谣': { voice_id: 'male-qn-qingse', speed: 0.9 },
+  '摇滚': { voice_id: 'male-qn-jingying', speed: 1.1 },
+  '电子': { voice_id: 'female-shaonv', speed: 1.1 },
+  '欢快': { voice_id: 'female-shaonv', speed: 1.05 },
+  '伤感': { voice_id: 'female-qingse', speed: 0.85 },
+  '国风': { voice_id: 'female-yujie', speed: 0.9 },
+  '爵士': { voice_id: 'female-qingse', speed: 0.95 },
+  '说唱': { voice_id: 'male-qn-jingying', speed: 1.2 },
+  '流行': { voice_id: 'female-qingse', speed: 1.0 },
+};
+
 type JsonObject = Record<string, unknown>;
 
 @Injectable()
@@ -52,20 +67,24 @@ export class MiniMaxService {
   async generateLyrics(dto: LyricsRequestDto) {
     try {
       const client = this.getClient();
-      const systemPrompt = MODE_PROMPTS[dto.mode || 'song'];
+      const mode = dto.mode || 'song';
 
       if (dto.image) {
-        return this.generateLyricsFromImage(dto, systemPrompt);
+        return this.generateLyricsFromImage(dto, mode);
       }
 
-      const userPrompt = this.buildLyricsUserPrompt(dto);
+      const wrappedPrompt = this.wrapLyricsPrompt(dto);
 
       const response = await client.chat.createCompletion({
         model: TEXT_MODEL,
-        max_completion_tokens: 800,
+        max_completion_tokens: 1200,
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
+          {
+            role: 'system',
+            content:
+              '你是专业中文流行歌曲创作人。根据用户输入，先取一个歌名，再给出3-5个英文风格标签，然后写带[Verse][Chorus]段落的完整歌词。严格用如下格式输出：\n标题：xxx\n风格：xxx,xxx\n歌词：\n[Verse]...',
+          },
+          { role: 'user', content: wrappedPrompt },
         ],
       });
       this.assertProviderSuccess(response.data);
@@ -73,24 +92,55 @@ export class MiniMaxService {
       if (!rawText) {
         throw new BadGatewayException('MiniMax 歌词生成结果为空。');
       }
-      return this.parseLyrics(rawText);
+      return this.parseLyricsResponse(rawText);
     } catch (error) {
       this.handleMiniMaxError(error);
     }
   }
 
+  private wrapLyricsPrompt(dto: LyricsRequestDto): string {
+    const mode = dto.mode || 'song';
+    const prompt = dto.prompt || '';
+    const forWho = dto.forWho || '一个重要的人';
+
+    const wrappers: Record<string, (p: string) => string> = {
+      song: (p) => `创作一首中文歌曲，表达：${p}`,
+      meme: (p) =>
+        `把这个网络热梗/流行语写成一首洗脑魔性、副歌重复抓耳、适合传播的中文神曲：「${p}」`,
+      emotion: (p) =>
+        `把下面这段心情/日记/经历提炼升华成一首有画面感、有情绪张力的中文歌词：「${p}」`,
+      foryou: (p) =>
+        `为「${forWho}」写一首中文歌，要表达：「${p}」。真诚有故事感，副歌点题。`,
+      photo: (p) => `看这张图片，为它写一首中文歌。${p ? '额外要求：' + p : ''}`,
+    };
+
+    const wrapper = wrappers[mode] || wrappers.song;
+    return wrapper(prompt);
+  }
+
+  private parseLyricsResponse(rawText: string) {
+    const cleaned = rawText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    const title = (cleaned.match(/标题：(.+)/) || [])[1] || '';
+    const style = (cleaned.match(/风格：(.+)/) || [])[1] || '';
+    const lyrics = (cleaned.split(/歌词：/)[1] || cleaned).trim();
+
+    return {
+      title: title.trim() || '未命名',
+      style: style.trim() || 'pop, emotional',
+      lyrics: lyrics || cleaned,
+      rawText,
+    };
+  }
+
   private async generateLyricsFromImage(
     dto: LyricsRequestDto,
-    systemPrompt: string,
+    mode: string,
   ) {
     const apiKey = process.env.MINIMAX_API_KEY?.trim();
     if (!apiKey) {
       throw new ServiceUnavailableException('MINIMAX_API_KEY 未配置');
     }
     const extraPrompt = dto.prompt ? `额外要求：${dto.prompt}` : '';
-    const stylePrompt = dto.styles?.length
-      ? `风格倾向：${dto.styles.join('、')}`
-      : '';
 
     const response = await fetch(`${MINIMAX_BASE_URL}/v1/chat/completions`, {
       method: 'POST',
@@ -102,13 +152,17 @@ export class MiniMaxService {
         model: TEXT_MODEL,
         max_completion_tokens: 1200,
         messages: [
-          { role: 'system', content: systemPrompt },
+          {
+            role: 'system',
+            content:
+              '你是专业中文流行歌曲创作人。根据图片内容，先取一个歌名，再给出3-5个英文风格标签，然后写带[Verse][Chorus]段落的完整歌词。严格用如下格式输出：\n标题：xxx\n风格：xxx,xxx\n歌词：\n[Verse]...',
+          },
           {
             role: 'user',
             content: [
               {
                 type: 'text',
-                text: `看这张图片，为它写一首中文歌。${stylePrompt}${extraPrompt ? '，' + extraPrompt : ''}\n严格用如下格式输出：\n标题：xxx\n风格：xxx,xxx\n歌词：\n[Verse]...`,
+                text: `看这张图片，为它写一首中文歌。${extraPrompt ? '额外要求：' + extraPrompt : ''}`,
               },
               {
                 type: 'image_url',
@@ -126,7 +180,7 @@ export class MiniMaxService {
     if (!rawText) {
       throw new BadGatewayException('MiniMax 歌词生成结果为空。');
     }
-    return this.parseImageLyrics(rawText);
+    return this.parseLyricsResponse(rawText);
   }
 
   private parseImageLyrics(rawText: string) {
@@ -260,15 +314,78 @@ export class MiniMaxService {
     }
   }
 
-  async generateTts(text: string): Promise<string> {
+  async generateDjScript(song: {
+    title: string;
+    style: string;
+    lyrics?: string;
+    authorName?: string;
+  }) {
+    try {
+      const apiKey = process.env.MINIMAX_API_KEY?.trim();
+      if (!apiKey) {
+        throw new ServiceUnavailableException('MINIMAX_API_KEY 未配置');
+      }
+
+      const lyricsPreview = song.lyrics
+        ? song.lyrics.slice(0, 100)
+        : '';
+
+      console.log('[DJ脚本] 开始生成:', { title: song.title, style: song.style });
+
+      const response = await fetch(`${MINIMAX_BASE_URL}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: TEXT_MODEL,
+          max_completion_tokens: 300,
+          temperature: 0.8,
+          messages: [
+            {
+              role: 'system',
+              content:
+                '你是 Echo AI 音乐社区的 AI DJ，擅长用富有感染力的语言介绍歌曲。播报内容要简短（60-80字），自然流畅，有电台主播的感觉。结合歌曲的风格和歌词意境，营造独特的氛围。不要使用Markdown格式。',
+            },
+            {
+              role: 'user',
+              content: `请为歌曲《${song.title}》（风格：${song.style}）创作一段 DJ 播报开场白。${
+                lyricsPreview ? `歌词片段：${lyricsPreview}` : ''
+              }`,
+            },
+          ],
+        }),
+      });
+
+      const data = await response.json();
+      console.log('[DJ脚本] API响应:', JSON.stringify(data, null, 2));
+      this.assertProviderSuccess(data);
+
+      const rawText = data.choices?.[0]?.message?.content?.trim() || '';
+      const text = rawText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      console.log('[DJ脚本] 生成成功:', { text });
+      return { text };
+    } catch (error) {
+      console.error('[DJ脚本] 生成失败:', error);
+      this.handleMiniMaxError(error);
+    }
+  }
+
+  async generateTts(
+    text: string,
+    style?: string,
+  ): Promise<string> {
     try {
       const client = this.getClient();
+      const voiceConfig = this.resolveVoiceConfig(style);
+
       const response = await client.speech.synthesize({
         model: 'speech-2.8-hd',
         text,
         voice_setting: {
-          voice_id: 'Chinese (Mandarin)_Lyrical_Voice',
-          speed: 1.0,
+          voice_id: voiceConfig.voice_id,
+          speed: voiceConfig.speed,
         },
         audio_setting: {
           sample_rate: 32000,
@@ -293,6 +410,30 @@ export class MiniMaxService {
     } catch (error) {
       this.handleMiniMaxError(error);
     }
+  }
+
+  private resolveVoiceConfig(style?: string): {
+    voice_id: string;
+    speed: number;
+  } {
+    if (!style) {
+      return {
+        voice_id: 'Chinese (Mandarin)_Lyrical_Voice',
+        speed: 1.0,
+      };
+    }
+
+    const styleKeys = Object.keys(STYLE_VOICE_MAP);
+    for (const key of styleKeys) {
+      if (style.includes(key)) {
+        return STYLE_VOICE_MAP[key];
+      }
+    }
+
+    return {
+      voice_id: 'Chinese (Mandarin)_Lyrical_Voice',
+      speed: 1.0,
+    };
   }
 
   async generateMusic(dto: MusicRequestDto) {

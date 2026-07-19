@@ -6,14 +6,17 @@ import {
   Param,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { User } from '@prisma/client';
+import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminService } from '../admin/admin.service';
 import { AudioStorageService } from '../common/services/audio-storage.service';
+import { PosterService } from '../common/services/poster.service';
 import { mapSong } from '../common/utils/song-mapper';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiTaskService } from './ai-task.service';
@@ -33,6 +36,7 @@ export class AiPublicController {
     private readonly prisma: PrismaService,
     private readonly adminService: AdminService,
     private readonly audioStorageService: AudioStorageService,
+    private readonly posterService: PosterService,
   ) {}
 
   @Post('lyrics')
@@ -234,5 +238,17 @@ export class AiPublicController {
   @ApiOperation({ summary: '换一批电台主题' })
   refreshRadio() {
     return this.hostService.getRadio();
+  }
+
+  @Get('song/:id/poster')
+  @ApiOperation({ summary: '下载歌曲海报' })
+  async downloadPoster(@Param('id') id: string, @Res() res: Response) {
+    const buffer = await this.posterService.generateSongPoster(id);
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="poster_${id}.png"`,
+    );
+    res.send(buffer);
   }
 }
