@@ -90,7 +90,7 @@ export class SongsService {
 
   async updateSong(id: string, user: User, dto: UpdateSongDto) {
     const song = await this.getOwnedSong(id, user.id);
-    if (!['draft', 'private', 'generating'].includes(song.status)) {
+    if (!['draft', 'private', 'generating', 'generated'].includes(song.status)) {
       throw new BadRequestException('当前状态不可编辑');
     }
     const coverImg = await this.coverStorageService.persistCover(
