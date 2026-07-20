@@ -75,24 +75,22 @@ export class MiniMaxService {
 
       const wrappedPrompt = this.wrapLyricsPrompt(dto);
 
-      const response = await client.chat.createCompletion({
-        model: TEXT_MODEL,
-        max_completion_tokens: 1200,
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你是专业中文流行歌曲创作人。根据用户输入，先取一个歌名，再给出3-5个英文风格标签，然后写带[Verse][Chorus]段落的完整歌词。严格用如下格式输出：\n标题：xxx\n风格：xxx,xxx\n歌词：\n[Verse]...',
-          },
-          { role: 'user', content: wrappedPrompt },
-        ],
+      const response = await client.music.generateLyrics({
+        mode: 'write_full_song',
+        prompt: wrappedPrompt,
       });
       this.assertProviderSuccess(response.data);
-      const rawText = response.data.choices[0]?.message.content?.trim();
-      if (!rawText) {
+      const lyrics = response.data.lyrics?.trim() || '';
+      if (!lyrics) {
         throw new BadGatewayException('MiniMax 歌词生成结果为空。');
       }
-      return this.parseLyricsResponse(rawText);
+
+      return {
+        title: response.data.song_title?.trim() || '未命名',
+        style: response.data.style_tags?.trim() || '',
+        lyrics,
+        rawText: JSON.stringify(response.data),
+      };
     } catch (error) {
       this.handleMiniMaxError(error);
     }
@@ -120,14 +118,35 @@ export class MiniMaxService {
 
   private parseLyricsResponse(rawText: string) {
     const cleaned = rawText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    const title = (cleaned.match(/标题：(.+)/) || [])[1] || '';
-    const style = (cleaned.match(/风格：(.+)/) || [])[1] || '';
-    const lyrics = (cleaned.split(/歌词：/)[1] || cleaned).trim();
+    const jsonText = this.extractJsonText(cleaned);
+    const parsed = jsonText ? this.safeParseObject(jsonText) : null;
+    const jsonLyrics = this.pickString(parsed, 'lyrics');
+
+    const title =
+      this.pickString(parsed, 'title') ||
+      (cleaned.match(/标题[:：]\s*(.+)/) || [])[1] ||
+      '';
+    const style =
+      this.pickString(parsed, 'style') ||
+      (cleaned.match(/风格[:：]\s*(.+)/) || [])[1] ||
+      '';
+    const labelSplit = cleaned.split(/歌词[:：]/);
+    const sectionMatch = cleaned.match(/\[(?:Verse|Chorus|Bridge|Intro|Outro)[\s\S]*$/i);
+    const lyrics = (
+      jsonLyrics ||
+      (labelSplit.length > 1 ? labelSplit.slice(1).join('歌词：') : '') ||
+      sectionMatch?.[0] ||
+      ''
+    ).trim();
+
+    if (!lyrics) {
+      throw new BadGatewayException('MiniMax 歌词结果格式异常，请重新生成。');
+    }
 
     return {
       title: title.trim() || '未命名',
-      style: style.trim() || 'pop, emotional',
-      lyrics: lyrics || cleaned,
+      style: style.trim(),
+      lyrics,
       rawText,
     };
   }
@@ -162,7 +181,7 @@ export class MiniMaxService {
             content: [
               {
                 type: 'text',
-                text: `看这张图片，为它写一首中文歌。${extraPrompt ? '额外要求：' + extraPrompt : ''}`,
+                text: `看这张图片，为它写一首中文歌。${extraPrompt}`,
               },
               {
                 type: 'image_url',
@@ -245,6 +264,142 @@ export class MiniMaxService {
       '只返回JSON格式：{"title":"歌曲标题","style":"歌曲风格","lyrics":"完整歌词，包含[Verse][Chorus][Bridge]等段落标记"}';
 
     return prompt;
+  }
+
+  async generateHostTopic(vibe: {
+    title: string;
+    style: string;
+    keyword: string;
+  }) {
+    try {
+      const client = this.getClient();
+      const response = await client.chat.createCompletion({
+        model: TEXT_MODEL,
+        max_completion_tokens: 300,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是 Echo AI 音乐社区的 AI 主理人。请为社区生成一个今日创作话题，鼓励用户用 AI 做一首歌。只返回 JSON，格式为 {"title":"话题名","emoji":"一个符号","desc":"60字以内的话题说明"}。',
+          },
+          {
+            role: 'user',
+            content: `今日灵感：${vibe.title}\n推荐风格：${vibe.style}\n关键词：${vibe.keyword}`,
+          },
+        ],
+      });
+
+      this.assertProviderSuccess(response.data);
+      const rawText = response.data.choices[0]?.message.content?.trim() || '';
+      const jsonText = this.extractJsonText(rawText);
+      const parsed = jsonText ? this.safeParseObject(jsonText) : null;
+
+      return {
+        title: this.pickString(parsed, 'title') || vibe.title,
+        emoji: this.pickString(parsed, 'emoji') || '♪',
+        desc:
+          this.pickString(parsed, 'desc') ||
+          `用 ${vibe.keyword} 写一首歌，风格可以靠近 ${vibe.style}。`,
+      };
+    } catch (error) {
+      this.handleMiniMaxError(error);
+    }
+  }
+
+  async generateHostPickComment(song: {
+    title: string;
+    style: string;
+    lyrics?: string;
+    authorName?: string;
+  }) {
+    try {
+      const client = this.getClient();
+      const lyricsPreview = song.lyrics ? song.lyrics.slice(0, 240) : '';
+      const response = await client.chat.createCompletion({
+        model: TEXT_MODEL,
+        max_completion_tokens: 220,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是 Echo AI 音乐社区的 AI 主理人。请给用户作品写一段温暖、具体、像社区翻牌一样的短评，30到60字，不要 Markdown，不要 JSON，不要使用引号。',
+          },
+          {
+            role: 'user',
+            content: `作品名：${song.title}\n作者：${song.authorName ?? '社区创作者'}\n风格：${song.style}\n歌词片段：${lyricsPreview}`,
+          },
+        ],
+      });
+
+      this.assertProviderSuccess(response.data);
+      const text =
+        response.data.choices[0]?.message.content
+          ?.replace(/<think>[\s\S]*?<\/think>/gi, '')
+          .trim() || '';
+
+      return {
+        text:
+          text ||
+          `这首《${song.title}》有一种很真诚的表达，值得被更多人听见。`,
+      };
+    } catch (error) {
+      this.handleMiniMaxError(error);
+    }
+  }
+
+  async generateHostOfficialSong(vibe: {
+    title: string;
+    style: string;
+    keyword: string;
+  }) {
+    try {
+      const client = this.getClient();
+      const titleResponse = await client.chat.createCompletion({
+        model: TEXT_MODEL,
+        max_completion_tokens: 120,
+        messages: [
+          {
+            role: 'user',
+            content: `你是音乐社区 Echo 的主理人，要发一首今日主打歌。主题氛围是「${vibe.title}」。给这首歌起一个文艺、有记忆点的中文歌名，12字以内。直接输出歌名本身，不要书名号、不要引号、不要解释。`,
+          },
+        ],
+      });
+      this.assertProviderSuccess(titleResponse.data);
+      const title =
+        titleResponse.data.choices[0]?.message.content
+          ?.replace(/<think>[\s\S]*?<\/think>/gi, '')
+          .replace(/[《》“”"']/g, '')
+          .split('\n')[0]
+          .trim()
+          .slice(0, 12) || vibe.title.slice(0, 12);
+
+      const lyricsResponse = await client.chat.createCompletion({
+        model: TEXT_MODEL,
+        max_completion_tokens: 1600,
+        messages: [
+          {
+            role: 'user',
+            content: `你是顶级华语作词人。围绕主题「${vibe.title}」（关键词：${vibe.keyword}）写一首完整、动人的中文歌词。要求：
+1. 用 [Verse] / [Chorus] / [Bridge] 分段，至少包含两段 Verse、两段 Chorus、一段 Bridge。
+2. 副歌要有记忆点、可传唱，主歌叙事有画面。
+3. 只输出歌词本身，保留 [Verse]/[Chorus]/[Bridge] 标签，不要标题、不要解释。`,
+          },
+        ],
+      });
+      this.assertProviderSuccess(lyricsResponse.data);
+      const lyrics =
+        lyricsResponse.data.choices[0]?.message.content
+          ?.replace(/<think>[\s\S]*?<\/think>/gi, '')
+          .trim() || '';
+
+      return {
+        title,
+        style: vibe.style,
+        lyrics,
+      };
+    } catch (error) {
+      this.handleMiniMaxError(error);
+    }
   }
 
   async generateReview(song: {

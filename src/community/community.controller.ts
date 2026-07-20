@@ -35,8 +35,8 @@ export class CommunityController {
 
   @Get('resonance')
   @ApiOperation({ summary: '同频推荐' })
-  getResonance() {
-    return this.communityService.getResonance();
+  getResonance(@Query('name') name?: string) {
+    return this.communityService.getResonance(name);
   }
 
   @Post('like/:id')

@@ -19,6 +19,14 @@ import { MiniMaxService } from './minimax.service';
 
 const GENERATE_COST = 2;
 
+type CreateGeneratedSongOptions = {
+  fileKey?: string;
+  status?: string;
+  published?: boolean;
+  publishedAt?: Date | null;
+  hostPick?: boolean;
+};
+
 @Injectable()
 export class AiTaskService {
   constructor(
@@ -35,7 +43,9 @@ export class AiTaskService {
       const result = await this.miniMaxService.generateLyrics(dto);
       const styles = dto.styles?.length
         ? dto.styles
-        : [result.style ?? '流行', '治愈'];
+        : result.style
+          ? [result.style]
+          : [];
       return {
         title: result.title,
         styles,
@@ -93,35 +103,6 @@ export class AiTaskService {
     });
 
     try {
-      const result = await this.miniMaxService
-        .generateMusic(dto)
-        .catch(() => this.mockService.generateMusic(dto));
-      const audioUrl = await this.audioStorageService.persistAudio(
-        result.audioUrl,
-        taskId,
-      );
-
-      const song = await this.prisma.song.create({
-        data: {
-          title: dto.title,
-          style: dto.style,
-          prompt: dto.prompt ?? dto.style,
-          lyrics: dto.lyrics,
-          audioUrl,
-          duration: result.duration ?? 0,
-          status: 'draft',
-          mode: dto.mode ?? 'song',
-          isInstrumental: dto.isInstrumental ?? false,
-          originId: dto.originId ?? undefined,
-          forWho: dto.forWho,
-          challengeId: dto.challengeId ?? null,
-          unlocked: dto.mode !== 'foryou',
-          authorId: user.id,
-          authorName: user.name,
-          authorColor: user.color,
-        },
-      });
-
       await this.prisma.aiTask.update({
         where: { id: taskId },
         data: {
@@ -129,21 +110,6 @@ export class AiTaskService {
           progress: 70,
         },
       });
-
-      let coverUrl: string | null = null;
-      try {
-        const coverResult = await this.miniMaxService.generateCover({
-          title: dto.title,
-          style: dto.style,
-        });
-        if (coverResult.imageUrl) {
-          const persistedUrl = await this.coverStorageService.persistCover(
-            coverResult.imageUrl,
-            song.id,
-          );
-          coverUrl = persistedUrl ?? null;
-        }
-      } catch {}
 
       await this.prisma.aiTask.update({
         where: { id: taskId },
@@ -153,24 +119,8 @@ export class AiTaskService {
         },
       });
 
-      let aiReview: string | null = null;
-      if (!dto.isInstrumental) {
-        try {
-          const reviewResult = await this.miniMaxService.generateReview({
-            title: dto.title,
-            style: dto.style,
-            lyrics: dto.lyrics,
-          });
-          aiReview = reviewResult?.text ?? null;
-        } catch {}
-      }
-
-      const updatedSong = await this.prisma.song.update({
-        where: { id: song.id },
-        data: {
-          coverImg: coverUrl,
-          review: aiReview,
-        },
+      const updatedSong = await this.createGeneratedSong(dto, user, {
+        fileKey: taskId,
       });
 
       const updatedTask = await this.prisma.aiTask.update({
@@ -202,6 +152,87 @@ export class AiTaskService {
         },
       });
     }
+  }
+
+  async createGeneratedSong(
+    dto: MusicRequestDto,
+    user: Pick<User, 'id' | 'name' | 'color'>,
+    options: CreateGeneratedSongOptions = {},
+  ) {
+    const result = await this.miniMaxService
+      .generateMusic(dto)
+      .catch(() => this.mockService.generateMusic(dto));
+    const audioUrl = await this.audioStorageService.persistAudio(
+      result.audioUrl,
+      options.fileKey ?? `song_${Date.now()}`,
+    );
+    const tags = dto.style
+      .split(/[,/，]/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .slice(0, 6);
+
+    const song = await this.prisma.song.create({
+      data: {
+        title: dto.title,
+        style: dto.style,
+        tags,
+        prompt: dto.prompt ?? dto.style,
+        lyrics: dto.lyrics,
+        audioUrl,
+        duration: result.duration ?? 0,
+        status: options.status ?? 'draft',
+        published: options.published ?? false,
+        publishedAt:
+          options.publishedAt ??
+          (options.published ? new Date() : null),
+        hostPick: options.hostPick ?? false,
+        mode: dto.mode ?? 'song',
+        isInstrumental: dto.isInstrumental ?? false,
+        originId: dto.originId ?? undefined,
+        forWho: dto.forWho,
+        challengeId: dto.challengeId ?? null,
+        unlocked: dto.mode !== 'foryou',
+        authorId: user.id,
+        authorName: user.name,
+        authorColor: user.color,
+      },
+    });
+
+    let coverUrl: string | null = null;
+    try {
+      const coverResult = await this.miniMaxService.generateCover({
+        title: dto.title,
+        style: dto.style,
+      });
+      if (coverResult.imageUrl) {
+        const persistedUrl = await this.coverStorageService.persistCover(
+          coverResult.imageUrl,
+          song.id,
+        );
+        coverUrl = persistedUrl ?? null;
+      }
+    } catch {}
+
+    let aiReview: string | null = null;
+    if (!dto.isInstrumental) {
+      try {
+        const reviewResult = await this.miniMaxService.generateReview({
+          title: dto.title,
+          style: dto.style,
+          lyrics: dto.lyrics,
+        });
+        aiReview = reviewResult?.text ?? null;
+      } catch {}
+    }
+
+    return this.prisma.song.update({
+      where: { id: song.id },
+      data: {
+        coverImg: coverUrl,
+        review: aiReview,
+      },
+    });
   }
 
   async getTask(id: string) {
