@@ -139,6 +139,43 @@ export class SongsService {
     return { song: mapSong(updated) };
   }
 
+  async deleteOwnSong(id: string, user: User) {
+    const song = await this.getOwnedSong(id, user.id);
+    const canDelete =
+      !song.published &&
+      ['draft', 'private', 'failed', 'generating', 'generated'].includes(
+        song.status,
+      );
+
+    if (!canDelete) {
+      throw new BadRequestException('已发布作品请先设为仅自己可见，再删除');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const playlistLinks = await tx.playlistSong.findMany({
+        where: { songId: id },
+        select: { playlistId: true },
+      });
+      const playlistIds = [...new Set(playlistLinks.map((item) => item.playlistId))];
+
+      await tx.playlistSong.deleteMany({ where: { songId: id } });
+
+      await Promise.all(
+        playlistIds.map(async (playlistId) => {
+          const songCount = await tx.playlistSong.count({ where: { playlistId } });
+          await tx.playlist.update({
+            where: { id: playlistId },
+            data: { songCount },
+          });
+        }),
+      );
+
+      await tx.song.delete({ where: { id } });
+    });
+
+    return { deleted: true, songId: id };
+  }
+
   async recordPlay(id: string) {
     const song = await this.prisma.song.findUnique({ where: { id } });
     if (!song) throw new NotFoundException('作品不存在');
