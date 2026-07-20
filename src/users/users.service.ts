@@ -17,6 +17,13 @@ export class UsersService {
       this.prisma.playlist.findMany({
         where: { userId: user.id },
         orderBy: [{ isSystem: 'desc' }, { createdAt: 'desc' }],
+        include: {
+          playlistSongs: {
+            orderBy: { createdAt: 'asc' },
+            take: 1,
+            include: { song: true },
+          },
+        },
       }),
     ]);
 

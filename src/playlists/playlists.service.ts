@@ -35,6 +35,13 @@ export class PlaylistsService {
     const playlists = await this.prisma.playlist.findMany({
       where: { userId: user.id },
       orderBy: [{ isSystem: 'desc' }, { createdAt: 'desc' }],
+      include: {
+        playlistSongs: {
+          orderBy: { createdAt: 'asc' },
+          take: 1,
+          include: { song: true },
+        },
+      },
     });
     return { list: playlists.map(mapPlaylist) };
   }
@@ -104,6 +111,7 @@ export class PlaylistsService {
       where: { id },
       include: {
         playlistSongs: {
+          orderBy: { createdAt: 'asc' },
           include: { song: true },
         },
       },
