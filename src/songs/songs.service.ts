@@ -82,10 +82,21 @@ export class SongsService {
       throw new ForbiddenException('无权查看该作品');
     }
 
-    const collectCount = await this.prisma.collect.count({
-      where: { songId: id },
-    });
-    return { song: mapSong(song, { collectCount }) };
+    const [collectCount, liked] = await Promise.all([
+      this.prisma.collect.count({
+        where: { songId: id },
+      }),
+      user
+        ? this.prisma.like
+            .findFirst({
+              where: { songId: id, userId: user.id },
+              select: { id: true },
+            })
+            .then(Boolean)
+        : false,
+    ]);
+
+    return { song: mapSong(song, { collectCount, liked }) };
   }
 
   async updateSong(id: string, user: User, dto: UpdateSongDto) {

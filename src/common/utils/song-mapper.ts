@@ -3,6 +3,7 @@ import { FORYOU_UNLOCK_LIKES } from '../constants';
 
 export type SongMapOptions = {
   collectCount?: number;
+  liked?: boolean;
 };
 
 export function mapSong(song: Song, options?: SongMapOptions) {
@@ -35,6 +36,7 @@ export function mapSong(song: Song, options?: SongMapOptions) {
         }
       : null,
     likeCount: song.likes,
+    liked: options?.liked ?? false,
     collectCount: options?.collectCount ?? 0,
     commentCount: song.commentCount,
     playCount: song.plays,
