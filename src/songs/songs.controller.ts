@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -81,6 +82,14 @@ export class SongController {
     @Body() dto: RemixSongDto,
   ) {
     return this.songsService.remix(id, user, dto);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: '删除自己的未公开作品' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  deleteSong(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.songsService.deleteOwnSong(id, user);
   }
 }
 
