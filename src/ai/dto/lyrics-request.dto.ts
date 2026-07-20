@@ -5,6 +5,7 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class LyricsRequestDto {
@@ -13,11 +14,13 @@ export class LyricsRequestDto {
   @IsString()
   mode?: string;
 
-  @ApiProperty({ example: '深夜加班后走在回家路上的释然' })
+  @ApiProperty({ example: '深夜加班后走在回家路上的释然', required: false })
+  @IsOptional()
   @IsString()
   @MinLength(2)
   @MaxLength(300)
-  prompt: string;
+  @ValidateIf((o) => o.mode !== 'photo' || !o.image)
+  prompt?: string;
 
   @ApiPropertyOptional({ example: ['流行', '治愈'] })
   @IsOptional()

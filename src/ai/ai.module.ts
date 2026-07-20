@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AdminModule } from '../admin/admin.module';
 import { AudioStorageService } from '../common/services/audio-storage.service';
+import { CoverStorageService } from '../common/services/cover-storage.service';
+import { PosterService } from '../common/services/poster.service';
 import { AiController } from './ai.controller';
 import { AiMockService } from './ai-mock.service';
 import { AiPublicController } from './ai-public.controller';
@@ -17,6 +19,8 @@ import { MiniMaxService } from './minimax.service';
     AiTaskService,
     HostService,
     AudioStorageService,
+    CoverStorageService,
+    PosterService,
   ],
   exports: [MiniMaxService, AiTaskService, HostService],
 })

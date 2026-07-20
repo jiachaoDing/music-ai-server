@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { User } from '@prisma/client';
 import { AudioStorageService } from '../common/services/audio-storage.service';
+import { CoverStorageService } from '../common/services/cover-storage.service';
 import { assertChallengeJoinable } from '../common/utils/challenge-utils';
 import { mapSong } from '../common/utils/song-mapper';
 import { mapTask } from '../common/utils/task-mapper';
@@ -26,6 +27,7 @@ export class AiTaskService {
     private readonly mockService: AiMockService,
     private readonly adminService: AdminService,
     private readonly audioStorageService: AudioStorageService,
+    private readonly coverStorageService: CoverStorageService,
   ) {}
 
   async generateLyrics(dto: LyricsRequestDto) {
@@ -120,14 +122,65 @@ export class AiTaskService {
         },
       });
 
+      await this.prisma.aiTask.update({
+        where: { id: taskId },
+        data: {
+          stage: '🎨 正在生成封面…',
+          progress: 70,
+        },
+      });
+
+      let coverUrl: string | null = null;
+      try {
+        const coverResult = await this.miniMaxService.generateCover({
+          title: dto.title,
+          style: dto.style,
+        });
+        if (coverResult.imageUrl) {
+          const persistedUrl = await this.coverStorageService.persistCover(
+            coverResult.imageUrl,
+            song.id,
+          );
+          coverUrl = persistedUrl ?? null;
+        }
+      } catch {}
+
+      await this.prisma.aiTask.update({
+        where: { id: taskId },
+        data: {
+          stage: '📝 正在生成 AI 乐评…',
+          progress: 90,
+        },
+      });
+
+      let aiReview: string | null = null;
+      if (!dto.isInstrumental) {
+        try {
+          const reviewResult = await this.miniMaxService.generateReview({
+            title: dto.title,
+            style: dto.style,
+            lyrics: dto.lyrics,
+          });
+          aiReview = reviewResult?.text ?? null;
+        } catch {}
+      }
+
+      const updatedSong = await this.prisma.song.update({
+        where: { id: song.id },
+        data: {
+          coverImg: coverUrl,
+          review: aiReview,
+        },
+      });
+
       const updatedTask = await this.prisma.aiTask.update({
         where: { id: taskId },
         data: {
           status: 'done',
           progress: 100,
           stage: '生成完成',
-          songId: song.id,
-          result: { song: mapSong(song) },
+          songId: updatedSong.id,
+          result: { song: mapSong(updatedSong) },
         },
       });
 
@@ -430,11 +483,24 @@ export class AiTaskService {
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
     if (!song) throw new NotFoundException('作品不存在');
 
-    const djText = this.mockService.generateDjText(song.title).text;
+    let djText = this.mockService.generateDjText(song.title).text;
+    try {
+      const scriptResult = await this.miniMaxService.generateDjScript({
+        title: song.title,
+        style: song.style,
+        lyrics: song.lyrics || undefined,
+        authorName: song.authorName || undefined,
+      });
+      if (scriptResult?.text) {
+        djText = scriptResult.text;
+      }
+    } catch (error) {
+      console.error('[DJ生成] 脚本生成失败:', error);
+    }
 
     let djUrl: string | null = null;
     try {
-      const ttsUrl = await this.miniMaxService.generateTts(djText);
+      const ttsUrl = await this.miniMaxService.generateTts(djText, song.style);
       if (ttsUrl) {
         const persistedUrl = await this.audioStorageService.persistAudio(
           ttsUrl,
@@ -442,7 +508,9 @@ export class AiTaskService {
         );
         djUrl = persistedUrl ?? null;
       }
-    } catch {}
+    } catch (error) {
+      console.error('[DJ生成] TTS生成失败:', error);
+    }
 
     await this.prisma.song.update({
       where: { id: songId },
