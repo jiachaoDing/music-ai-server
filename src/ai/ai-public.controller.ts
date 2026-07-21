@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -55,12 +56,28 @@ export class AiPublicController {
     return this.aiTaskService.submitGenerate(dto, user);
   }
 
+  @Post('ai/generate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '提交 AI 音乐生成任务' })
+  submitGenerateAlias(@Body() dto: MusicRequestDto, @CurrentUser() user: User) {
+    return this.aiTaskService.submitGenerate(dto, user);
+  }
+
   @Get('task/:id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: '查询异步任务状态' })
-  getTask(@Param('id') id: string) {
-    return this.aiTaskService.getTask(id);
+  getTask(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.aiTaskService.getTaskSample(id, user);
+  }
+
+  @Get('ai/tasks/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '查询异步任务状态' })
+  getTaskAlias(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.aiTaskService.getTaskSample(id, user);
   }
 
   @Post('albums')
@@ -69,6 +86,39 @@ export class AiPublicController {
   @ApiOperation({ summary: 'AI 音乐制作人专辑' })
   createAlbum(@Body() dto: AlbumRequestDto, @CurrentUser() user: User) {
     return this.aiTaskService.submitAlbum(dto, user);
+  }
+
+  @Post('album')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'AI 音乐制作人专辑' })
+  createAlbumCompat(@Body() dto: AlbumRequestDto, @CurrentUser() user: User) {
+    return this.aiTaskService.submitAlbum(dto, user);
+  }
+
+  @Post('ai/album')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'AI 音乐制作人专辑' })
+  createAlbumAlias(@Body() dto: AlbumRequestDto, @CurrentUser() user: User) {
+    return this.aiTaskService.submitAlbum(dto, user);
+  }
+
+  @Post('ai/remix')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '提交翻唱/二创任务' })
+  remixAlias(
+    @Body() dto: MusicRequestDto & { originId?: string },
+    @CurrentUser() user: User,
+  ) {
+    if (!dto.originId) throw new BadRequestException('originId is required');
+    return this.aiTaskService.submitRemix(dto.originId, user, {
+      title: dto.title,
+      style: dto.style,
+      lyrics: dto.lyrics,
+      prompt: dto.prompt ?? dto.style,
+    });
   }
 
   @Get('host')
@@ -123,6 +173,12 @@ export class AiPublicController {
     return this.aiTaskService.getAlbumById(id);
   }
 
+  @Get('album/:id')
+  @ApiOperation({ summary: '获取专辑详情' })
+  getAlbumCompat(@Param('id') id: string) {
+    return this.aiTaskService.getAlbumById(id);
+  }
+
   @Post('song/:id/review')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -138,7 +194,7 @@ export class AiPublicController {
         lyrics: song.lyrics || undefined,
       })
       .catch(() => ({
-        text: `🤖 《${song.title}》—— 一首值得循环的${song.style}风格作品。`,
+        text: `《${song.title}》是一首值得循环的 ${song.style} 风格作品。`,
       }));
 
     await this.prisma.song.update({

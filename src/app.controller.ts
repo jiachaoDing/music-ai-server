@@ -1,29 +1,31 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+﻿import { Body, Controller, Get, Post } from '@nestjs/common';
+import { AiTaskService } from './ai/ai-task.service';
 import { AppService } from './app.service';
 import { GenerateSongDto } from './dto/generate-song.dto';
 
-@ApiTags('health')
 @Controller()
 export class AppController {
-  constructor(private readonly appService: AppService) {}
+  constructor(
+    private readonly appService: AppService,
+    private readonly aiTaskService: AiTaskService,
+  ) {}
 
   @Get('health')
-  @ApiOperation({ summary: '服务健康检查' })
   getHealth() {
     return this.appService.getHealth();
   }
 
+  @Get('api/status')
+  getStatus() {
+    return this.aiTaskService.getQueueStatus();
+  }
+
   @Get('api/songs')
-  @ApiTags('songs')
-  @ApiOperation({ summary: '获取歌曲列表' })
   getSongs() {
     return this.appService.getSongs();
   }
 
   @Post('api/generate/mock')
-  @ApiTags('generate')
-  @ApiOperation({ summary: 'mock AI 音乐生成' })
   generateMock(@Body() dto: GenerateSongDto) {
     return this.appService.generateMock(dto);
   }
