@@ -12,6 +12,9 @@ import { MusicRequestDto } from './dto/music-request.dto';
 
 type MiniMaxSdk = typeof import('../../node_modules/minimax-api/dist/index.js');
 type JsonObject = Record<string, unknown>;
+type ProviderPayload = {
+  base_resp?: { status_code: number | string; status_msg?: string };
+};
 
 export type AiRequestContext = {
   taskId?: string;
@@ -27,7 +30,17 @@ const IMAGE_MODEL = 'image-01';
 const TTS_MODEL = 'tts-1';
 const DEFAULT_RETRIES = 2;
 const DEFAULT_TIMEOUT_MS = 240000;
+const RETRYABLE_MINIMAX_STATUS_CODES = new Set([1002, 1039, 1027]);
 const nodeRequire = createRequire(__filename);
+
+class MiniMaxProviderException extends BadGatewayException {
+  constructor(
+    readonly minimaxStatusCode: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 const MODE_PROMPTS: Record<string, string> = {
   song: 'Write a complete Chinese pop song with clear verse and chorus sections.',
@@ -330,8 +343,8 @@ export class MiniMaxService {
 
       const lyricsPreview = song.lyrics ? song.lyrics.slice(0, 100) : '';
       const data = await this.runProviderRequest(async () => {
-        const response = await fetch(
-          `${MINIMAX_BASE_URL}/v1/chat/completions`,
+        return this.fetchMiniMaxJson(
+          '/v1/chat/completions',
           {
             method: 'POST',
             headers: {
@@ -355,8 +368,8 @@ export class MiniMaxService {
               ],
             }),
           },
+          context?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         );
-        return this.parseFetchJson(response);
       }, context);
 
       this.assertProviderSuccess(data);
@@ -490,38 +503,41 @@ export class MiniMaxService {
     }
 
     const data = await this.runProviderRequest(async () => {
-      const response = await fetch(`${MINIMAX_BASE_URL}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+      return this.fetchMiniMaxJson(
+        '/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: TEXT_MODEL,
+            max_completion_tokens: 1200,
+            messages: [
+              {
+                role: 'system',
+                content:
+                  'Write a Chinese song from the image. Return title, style and lyrics with [Verse] and [Chorus].',
+              },
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: `Extra instruction: ${dto.prompt ?? ''}`,
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: { url: dto.image },
+                  },
+                ],
+              },
+            ],
+          }),
         },
-        body: JSON.stringify({
-          model: TEXT_MODEL,
-          max_completion_tokens: 1200,
-          messages: [
-            {
-              role: 'system',
-              content:
-                'Write a Chinese song from the image. Return title, style and lyrics with [Verse] and [Chorus].',
-            },
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: `Extra instruction: ${dto.prompt ?? ''}`,
-                },
-                {
-                  type: 'image_url',
-                  image_url: { url: dto.image },
-                },
-              ],
-            },
-          ],
-        }),
-      });
-      return this.parseFetchJson(response);
+        context?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      );
     }, context);
 
     this.assertProviderSuccess(data);
@@ -627,6 +643,7 @@ export class MiniMaxService {
         if (result === null || result === undefined) {
           throw new BadGatewayException('MiniMax empty response');
         }
+        this.assertProviderResultSuccess(result);
         return result;
       } catch (error) {
         lastError = error;
@@ -640,27 +657,27 @@ export class MiniMaxService {
     throw lastError;
   }
 
-  private withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(
-          new BadGatewayException(
-            `MiniMax request timeout after ${timeoutMs}ms`,
-          ),
-        );
-      }, timeoutMs);
-
-      promise.then(
-        (value) => {
-          clearTimeout(timer);
-          resolve(value);
-        },
-        (error) => {
-          clearTimeout(timer);
-          reject(error);
-        },
-      );
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutError = new BadGatewayException(
+      `MiniMax request timeout after ${timeoutMs}ms`,
+    );
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(timeoutError), timeoutMs);
     });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } catch (error) {
+      if (error === timeoutError) {
+        try {
+          await promise;
+        } catch {}
+      }
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private async parseFetchJson(response: Response) {
@@ -674,7 +691,36 @@ export class MiniMaxService {
     return data;
   }
 
+  private async fetchMiniMaxJson(
+    path: string,
+    init: RequestInit,
+    timeoutMs: number,
+  ) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(`${MINIMAX_BASE_URL}${path}`, {
+        ...init,
+        signal: controller.signal,
+      });
+      return this.parseFetchJson(response);
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw new BadGatewayException(
+          `MiniMax request timeout after ${timeoutMs}ms`,
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private shouldRetry(error: unknown) {
+    const minimaxStatusCode = this.getMiniMaxStatusCode(error);
+    if (RETRYABLE_MINIMAX_STATUS_CODES.has(minimaxStatusCode)) return true;
+
     const status = this.getErrorStatus(error);
     if (status === 429 || (status >= 500 && status < 600)) return true;
 
@@ -692,6 +738,56 @@ export class MiniMaxService {
       message.includes('etimedout') ||
       message.includes('empty response') ||
       /\b5\d\d\b/.test(message)
+    );
+  }
+
+  private assertProviderResultSuccess(result: unknown) {
+    const payload = this.getProviderPayload(result);
+    if (payload) {
+      this.assertProviderSuccess(payload);
+    }
+  }
+
+  private getProviderPayload(result: unknown): ProviderPayload | null {
+    if (typeof result !== 'object' || result === null) return null;
+    const root = result as Record<string, unknown>;
+
+    if (this.hasProviderBaseResp(root)) {
+      return root as ProviderPayload;
+    }
+
+    const data = root.data;
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      this.hasProviderBaseResp(data as Record<string, unknown>)
+    ) {
+      return data as ProviderPayload;
+    }
+
+    return null;
+  }
+
+  private hasProviderBaseResp(value: Record<string, unknown>) {
+    const baseResp = value.base_resp as Record<string, unknown> | undefined;
+    return (
+      typeof baseResp === 'object' &&
+      baseResp !== null &&
+      (typeof baseResp.status_code === 'number' ||
+        typeof baseResp.status_code === 'string')
+    );
+  }
+
+  private getMiniMaxStatusCode(error: unknown) {
+    return error instanceof MiniMaxProviderException
+      ? error.minimaxStatusCode
+      : 0;
+  }
+
+  private isAbortError(error: unknown) {
+    return (
+      error instanceof Error &&
+      (error.name === 'AbortError' || error.message.includes('aborted'))
     );
   }
 
@@ -745,13 +841,13 @@ export class MiniMaxService {
     return this.sdk;
   }
 
-  private assertProviderSuccess(payload: {
-    base_resp?: { status_code: number; status_msg: string };
-  }) {
+  private assertProviderSuccess(payload: ProviderPayload) {
     const baseResp = payload.base_resp;
-    if (baseResp && baseResp.status_code !== 0) {
-      throw new BadGatewayException(
-        `MiniMax request failed: ${baseResp.status_msg}`,
+    const statusCode = Number(baseResp?.status_code ?? 0);
+    if (baseResp && statusCode !== 0) {
+      throw new MiniMaxProviderException(
+        statusCode,
+        `MiniMax request failed: ${baseResp.status_msg || statusCode}`,
       );
     }
   }
