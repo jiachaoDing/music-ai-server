@@ -1,16 +1,20 @@
 import {
-  BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { User } from '@prisma/client';
+import { AdminService } from '../admin/admin.service';
 import { AudioStorageService } from '../common/services/audio-storage.service';
 import { CoverStorageService } from '../common/services/cover-storage.service';
 import { assertChallengeJoinable } from '../common/utils/challenge-utils';
+import {
+  buildSampleAlbumPayload,
+  buildSampleTaskPayload,
+} from '../common/utils/sample-compat';
 import { mapSong } from '../common/utils/song-mapper';
-import { mapTask } from '../common/utils/task-mapper';
-import { AdminService } from '../admin/admin.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiConcurrencyService } from './ai-concurrency.service';
 import { AiMockService } from './ai-mock.service';
 import { AlbumRequestDto } from './dto/album-request.dto';
 import { LyricsRequestDto } from './dto/lyrics-request.dto';
@@ -18,6 +22,8 @@ import { MusicRequestDto } from './dto/music-request.dto';
 import { MiniMaxService } from './minimax.service';
 
 const GENERATE_COST = 2;
+const ALBUM_COST = 5;
+const REMIX_COST = 1;
 
 type CreateGeneratedSongOptions = {
   fileKey?: string;
@@ -36,6 +42,7 @@ export class AiTaskService {
     private readonly adminService: AdminService,
     private readonly audioStorageService: AudioStorageService,
     private readonly coverStorageService: CoverStorageService,
+    private readonly aiConcurrencyService: AiConcurrencyService,
   ) {}
 
   async generateLyrics(dto: LyricsRequestDto) {
@@ -62,20 +69,18 @@ export class AiTaskService {
   async submitGenerate(dto: MusicRequestDto, user: User) {
     await assertChallengeJoinable(this.prisma, dto.challengeId);
 
-    if (user) {
-      await this.adminService.deductPoints(user.id, -GENERATE_COST, '生成歌曲');
-    }
+    const points = await this.adminService.deductPoints(
+      user.id,
+      -GENERATE_COST,
+      'generate song',
+    );
 
-    const queueAhead = await this.prisma.aiTask.count({
-      where: { status: { in: ['queued', 'running'] } },
-    });
-
+    const queueAhead = this.getCurrentQueueAhead();
     const task = await this.prisma.aiTask.create({
       data: {
         type: 'generate',
         status: 'queued',
-        stage:
-          queueAhead > 0 ? `排队中（前面还有 ${queueAhead} 个）` : '排队中',
+        stage: queueAhead > 0 ? `queued (${queueAhead} ahead)` : 'queued',
         progress: 10,
         queueAhead,
         userId: user.id,
@@ -83,8 +88,18 @@ export class AiTaskService {
       },
     });
 
-    void this.processGenerateTask(task.id, dto, user);
-    return { taskId: task.id };
+    void this.aiConcurrencyService
+      .run(() => this.processGenerateTask(task.id, dto, user), task.id)
+      .catch((error) =>
+        this.markTaskFailed(task.id, error, user.id, GENERATE_COST),
+      );
+
+    return this.buildSubmitResponse(
+      task.id,
+      queueAhead,
+      points.points,
+      GENERATE_COST,
+    );
   }
 
   private async processGenerateTask(
@@ -96,7 +111,7 @@ export class AiTaskService {
       where: { id: taskId },
       data: {
         status: 'running',
-        stage: '🎹 正在作曲编曲演唱…大约30~60秒',
+        stage: 'running',
         progress: 50,
         queueAhead: 0,
       },
@@ -106,7 +121,7 @@ export class AiTaskService {
       await this.prisma.aiTask.update({
         where: { id: taskId },
         data: {
-          stage: '🎨 正在生成封面…',
+          stage: 'generating cover',
           progress: 70,
         },
       });
@@ -114,43 +129,45 @@ export class AiTaskService {
       await this.prisma.aiTask.update({
         where: { id: taskId },
         data: {
-          stage: '📝 正在生成 AI 乐评…',
+          stage: 'generating review',
           progress: 90,
         },
       });
 
-      const updatedSong = await this.createGeneratedSong(dto, user, {
+      const song = await this.createGeneratedSong(dto, user, {
         fileKey: taskId,
       });
 
-      const updatedTask = await this.prisma.aiTask.update({
+      await this.prisma.aiTask.update({
         where: { id: taskId },
         data: {
           status: 'done',
           progress: 100,
-          stage: '生成完成',
-          songId: updatedSong.id,
-          result: { song: mapSong(updatedSong) },
+          stage: 'done',
+          songId: song.id,
+          result: { song: mapSong(song) },
         },
       });
-
-      return updatedTask;
     } catch (error) {
       await this.prisma.aiTask.update({
         where: { id: taskId },
         data: {
           status: 'error',
-          stage: '生成失败',
+          stage: 'failed',
           progress: 0,
           error: JSON.stringify({
             code: 600,
             message:
-              error instanceof Error
-                ? error.message
-                : 'AI 服务暂时不可用，请稍后重试',
+              error instanceof Error ? error.message : 'AI service unavailable',
           }),
         },
       });
+      await this.refundTaskCost(
+        taskId,
+        user.id,
+        GENERATE_COST,
+        'generate song refund',
+      );
     }
   }
 
@@ -184,8 +201,7 @@ export class AiTaskService {
         status: options.status ?? 'draft',
         published: options.published ?? false,
         publishedAt:
-          options.publishedAt ??
-          (options.published ? new Date() : null),
+          options.publishedAt ?? (options.published ? new Date() : null),
         hostPick: options.hostPick ?? false,
         mode: dto.mode ?? 'song',
         isInstrumental: dto.isInstrumental ?? false,
@@ -235,34 +251,45 @@ export class AiTaskService {
     });
   }
 
-  async getTask(id: string) {
-    const task = await this.prisma.aiTask.findUnique({ where: { id } });
-    if (!task) throw new NotFoundException('任务不存在');
-
-    const song = task.songId
-      ? await this.prisma.song.findUnique({ where: { id: task.songId } })
-      : null;
-
-    return mapTask(task, song);
+  async getTask(id: string, user?: User) {
+    return this.getTaskSample(id, user);
   }
 
   async submitAlbum(dto: AlbumRequestDto, user: User) {
-    await this.adminService.deductPoints(user.id, -5, 'AI 音乐制作人专辑');
+    const points = await this.adminService.deductPoints(
+      user.id,
+      -ALBUM_COST,
+      'generate album',
+    );
 
+    const queueAhead = this.getCurrentQueueAhead();
     const task = await this.prisma.aiTask.create({
       data: {
         type: 'album',
         status: 'queued',
-        stage: '专辑制作排队中',
+        stage:
+          queueAhead > 0
+            ? `album queued (${queueAhead} ahead)`
+            : 'album queued',
         progress: 5,
-        queueAhead: 0,
+        queueAhead,
         userId: user.id,
         input: JSON.parse(JSON.stringify(dto)),
       },
     });
 
-    void this.processAlbumTask(task.id, dto, user);
-    return { taskId: task.id };
+    void this.aiConcurrencyService
+      .run(() => this.processAlbumTask(task.id, dto, user), task.id)
+      .catch((error) =>
+        this.markTaskFailed(task.id, error, user.id, ALBUM_COST),
+      );
+
+    return this.buildSubmitResponse(
+      task.id,
+      queueAhead,
+      points.points,
+      ALBUM_COST,
+    );
   }
 
   private async processAlbumTask(
@@ -273,11 +300,21 @@ export class AiTaskService {
     const trackCount = dto.trackCount ?? 4;
 
     try {
+      await this.prisma.aiTask.update({
+        where: { id: taskId },
+        data: {
+          status: 'running',
+          stage: 'album running',
+          progress: 10,
+          queueAhead: 0,
+        },
+      });
+
       const album = await this.prisma.album.create({
         data: {
-          title: `${dto.theme} · 概念 EP`,
+          title: `${dto.theme} EP`,
           theme: dto.theme,
-          description: `围绕「${dto.theme}」生成的概念 EP`,
+          description: `EP based on ${dto.theme}`,
           authorId: user.id,
           authorName: user.name,
           trackCount,
@@ -286,19 +323,19 @@ export class AiTaskService {
 
       await this.prisma.aiTask.update({
         where: { id: taskId },
-        data: { albumId: album.id, status: 'running', progress: 10 },
+        data: { albumId: album.id },
       });
 
       const songs: Array<ReturnType<typeof mapSong> & { order: number }> = [];
 
-      for (let i = 1; i <= trackCount; i++) {
+      for (let i = 1; i <= trackCount; i += 1) {
         await this.prisma.aiTask.update({
           where: { id: taskId },
           data: {
-            stage: `✍️ 正在创作第 ${i} 首歌词…（共 ${trackCount} 首）`,
+            stage: `creating track ${i}/${trackCount}`,
             progress: Math.round((i / trackCount) * 80),
             result: {
-              songs: songs.map((s) => ({
+              tracks: songs.map((s) => ({
                 id: s.id,
                 title: s.title,
                 status: 'done',
@@ -309,10 +346,10 @@ export class AiTaskService {
         });
 
         const lyrics = await this.generateLyrics({
-          prompt: `${dto.theme} 曲目${i}`,
+          prompt: `${dto.theme} track ${i}`,
           mode: 'song',
         });
-        const styleText = lyrics.styles?.join(' / ') ?? '流行';
+        const styleText = lyrics.styles?.join(' / ') ?? 'pop';
 
         const music = await this.miniMaxService
           .generateMusic({
@@ -359,17 +396,23 @@ export class AiTaskService {
         where: { id: taskId },
         data: {
           status: 'done',
-          stage: '专辑制作完成',
+          stage: 'done',
           progress: 100,
           result: {
             album: {
               id: album.id,
               title: album.title,
+              name: album.title,
               description: album.description,
+              intro: album.description,
               coverUrl: album.coverUrl,
+              authorId: album.authorId,
+              author: album.authorName ?? user.name,
+              total: trackCount,
               trackCount,
               createdAt: album.createdAt.toISOString(),
             },
+            tracks: songs,
             songs,
           },
         },
@@ -379,13 +422,23 @@ export class AiTaskService {
         where: { id: taskId },
         data: {
           status: 'error',
-          stage: '专辑制作失败',
+          stage: 'failed',
+          progress: 0,
           error: JSON.stringify({
             code: 600,
-            message: error instanceof Error ? error.message : '专辑制作失败',
+            message:
+              error instanceof Error
+                ? error.message
+                : 'album generation failed',
           }),
         },
       });
+      await this.refundTaskCost(
+        taskId,
+        user.id,
+        ALBUM_COST,
+        'album generation refund',
+      );
     }
   }
 
@@ -394,32 +447,55 @@ export class AiTaskService {
     user: User,
     dto: { title?: string; style: string; lyrics?: string; prompt: string },
   ) {
-    await this.adminService.deductPoints(user.id, -1, '二创 / 翻唱');
-
     const originalSong = await this.prisma.song.findUnique({
       where: { id: originId },
     });
-    if (!originalSong) throw new NotFoundException('原作品不存在');
+    if (!originalSong) throw new NotFoundException('original song not found');
 
+    const points = await this.adminService.deductPoints(
+      user.id,
+      -REMIX_COST,
+      'remix',
+    );
+
+    const queueAhead = this.getCurrentQueueAhead();
     const task = await this.prisma.aiTask.create({
       data: {
         type: 'remix',
         status: 'queued',
-        stage: '翻唱任务排队中',
+        stage:
+          queueAhead > 0
+            ? `remix queued (${queueAhead} ahead)`
+            : 'remix queued',
         progress: 10,
+        queueAhead,
         userId: user.id,
         input: { originId, ...dto },
       },
     });
 
-    void this.processRemixTask(
+    void this.aiConcurrencyService
+      .run(
+        () =>
+          this.processRemixTask(
+            task.id,
+            originId,
+            user,
+            dto,
+            originalSong.title,
+          ),
+        task.id,
+      )
+      .catch((error) =>
+        this.markTaskFailed(task.id, error, user.id, REMIX_COST),
+      );
+
+    return this.buildSubmitResponse(
       task.id,
-      originId,
-      user,
-      dto,
-      originalSong.title,
+      queueAhead,
+      points.points,
+      REMIX_COST,
     );
-    return { taskId: task.id };
   }
 
   private async processRemixTask(
@@ -431,11 +507,17 @@ export class AiTaskService {
   ) {
     await this.prisma.aiTask.update({
       where: { id: taskId },
-      data: { status: 'running', stage: '正在生成翻唱版本', progress: 50 },
+      data: {
+        status: 'running',
+        stage: 'remix running',
+        progress: 50,
+        queueAhead: 0,
+      },
     });
 
     try {
-      const title = dto.title?.trim() || `${originalTitle}（${dto.style}版）`;
+      const title =
+        dto.title?.trim() || `${originalTitle} (${dto.style} version)`;
       const music = await this.miniMaxService
         .generateMusic({
           title,
@@ -491,7 +573,7 @@ export class AiTaskService {
         data: {
           status: 'done',
           progress: 100,
-          stage: '翻唱完成',
+          stage: 'done',
           songId: song.id,
           result: { song: mapSong(song) },
         },
@@ -501,18 +583,21 @@ export class AiTaskService {
         where: { id: taskId },
         data: {
           status: 'error',
+          stage: 'failed',
+          progress: 0,
           error: JSON.stringify({
             code: 600,
-            message: error instanceof Error ? error.message : '翻唱失败',
+            message: error instanceof Error ? error.message : 'remix failed',
           }),
         },
       });
+      await this.refundTaskCost(taskId, user.id, REMIX_COST, 'remix refund');
     }
   }
 
   async generateDj(songId: string) {
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
-    if (!song) throw new NotFoundException('作品不存在');
+    if (!song) throw new NotFoundException('song not found');
 
     let djText = this.mockService.generateDjText(song.title).text;
     try {
@@ -526,7 +611,7 @@ export class AiTaskService {
         djText = scriptResult.text;
       }
     } catch (error) {
-      console.error('[DJ生成] 脚本生成失败:', error);
+      console.error('[DJ] script generation failed:', error);
     }
 
     let djUrl: string | null = null;
@@ -540,7 +625,7 @@ export class AiTaskService {
         djUrl = persistedUrl ?? null;
       }
     } catch (error) {
-      console.error('[DJ生成] TTS生成失败:', error);
+      console.error('[DJ] tts generation failed:', error);
     }
 
     await this.prisma.song.update({
@@ -561,23 +646,176 @@ export class AiTaskService {
       },
     });
 
-    if (!album) throw new NotFoundException('专辑不存在');
+    if (!album) throw new NotFoundException('album not found');
 
-    return {
-      album: {
-        id: album.id,
-        title: album.title,
-        description: album.description,
-        coverUrl: album.coverUrl,
-        authorId: album.authorId,
-        trackCount: album.trackCount,
-        createdAt: album.createdAt.toISOString(),
-      },
-      songs: album.albumSongs.map((as) => mapSong(as.song)),
-    };
+    const tracks = album.albumSongs.map((as) => mapSong(as.song));
+    return buildSampleAlbumPayload({
+      album,
+      tracks,
+    });
   }
 
   dayLyric(type: 'vocal' | 'instrumental') {
     return this.mockService.generateDayLyric(type);
+  }
+
+  async getQueueStatus() {
+    return {
+      active: this.aiConcurrencyService.getActiveCount(),
+      pending: this.aiConcurrencyService.getPendingCount(),
+      max: this.aiConcurrencyService.getMaxConcurrency(),
+    };
+  }
+
+  async getTaskSample(id: string, user?: User) {
+    const task = await this.prisma.aiTask.findUnique({ where: { id } });
+    if (!task) throw new NotFoundException('task not found');
+    this.assertTaskOwner(task.userId, user);
+
+    const song = task.songId
+      ? await this.prisma.song.findUnique({ where: { id: task.songId } })
+      : null;
+    const album = task.albumId
+      ? await this.prisma.album.findUnique({
+          where: { id: task.albumId },
+          include: {
+            albumSongs: {
+              include: { song: true },
+              orderBy: { order: 'asc' },
+            },
+          },
+        })
+      : null;
+
+    const result = task.result as Record<string, unknown> | null;
+    const mappedAlbum = album
+      ? buildSampleAlbumPayload({
+          album,
+          tracks: album.albumSongs.map((as) => mapSong(as.song)),
+        }).album
+      : ((result?.album as Record<string, unknown> | undefined) ?? null);
+
+    const mappedSong = song
+      ? mapSong(song)
+      : ((result?.song as Record<string, unknown> | undefined) ?? null);
+
+    const queuePos =
+      task.status === 'queued' ? await this.getDynamicQueueAhead(task) : 0;
+
+    return buildSampleTaskPayload({
+      taskId: task.id,
+      status: task.status,
+      song: mappedSong,
+      album: mappedAlbum,
+      stage: task.stage,
+      error: task.error,
+      progress: task.progress,
+      queuePos,
+      queueAhead: queuePos,
+      active: this.aiConcurrencyService.getActiveCount(),
+      maxConcurrency: this.aiConcurrencyService.getMaxConcurrency(),
+      result: task.result,
+    });
+  }
+
+  private getCurrentQueueAhead() {
+    return (
+      this.aiConcurrencyService.getActiveCount() +
+      this.aiConcurrencyService.getPendingCount()
+    );
+  }
+
+  private async getDynamicQueueAhead(task: { id: string; createdAt: Date }) {
+    const inMemoryAhead = this.aiConcurrencyService.getQueueAhead(task.id);
+    if (inMemoryAhead !== null) return inMemoryAhead;
+
+    return this.prisma.aiTask.count({
+      where: {
+        status: { in: ['queued', 'running'] },
+        createdAt: { lt: task.createdAt },
+      },
+    });
+  }
+
+  private buildSubmitResponse(
+    taskId: string,
+    queueAhead: number,
+    points: number,
+    cost: number,
+  ) {
+    return {
+      taskId,
+      status: 'queued',
+      queuePos: queueAhead,
+      queueAhead,
+      active: this.aiConcurrencyService.getActiveCount(),
+      concurrency: this.aiConcurrencyService.getMaxConcurrency(),
+      maxConcurrency: this.aiConcurrencyService.getMaxConcurrency(),
+      points,
+      cost,
+    };
+  }
+
+  private assertTaskOwner(taskUserId: string | null, user?: User) {
+    if (user && taskUserId && taskUserId !== user.id) {
+      throw new ForbiddenException('Forbidden task access');
+    }
+  }
+
+  private async markTaskFailed(
+    taskId: string,
+    error: unknown,
+    userId?: string,
+    cost = 0,
+  ) {
+    await this.prisma.aiTask.update({
+      where: { id: taskId },
+      data: {
+        status: 'error',
+        stage: 'failed',
+        progress: 0,
+        error: JSON.stringify({
+          code: 600,
+          message: error instanceof Error ? error.message : 'AI task failed',
+        }),
+      },
+    });
+    if (userId && cost > 0) {
+      await this.refundTaskCost(taskId, userId, cost, 'AI task refund');
+    }
+  }
+
+  private async refundTaskCost(
+    taskId: string,
+    userId: string,
+    cost: number,
+    reason: string,
+  ) {
+    if (cost <= 0) return;
+
+    await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.pointsLedger.findFirst({
+        where: { userId, relatedId: taskId, delta: cost },
+      });
+      if (existing) return;
+
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user) return;
+
+      const balance = user.points + cost;
+      await tx.user.update({
+        where: { id: userId },
+        data: { points: balance },
+      });
+      await tx.pointsLedger.create({
+        data: {
+          userId,
+          delta: cost,
+          reason,
+          balance,
+          relatedId: taskId,
+        },
+      });
+    });
   }
 }

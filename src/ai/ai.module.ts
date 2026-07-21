@@ -4,6 +4,7 @@ import { AudioStorageService } from '../common/services/audio-storage.service';
 import { CoverStorageService } from '../common/services/cover-storage.service';
 import { PosterService } from '../common/services/poster.service';
 import { AiController } from './ai.controller';
+import { AiConcurrencyService } from './ai-concurrency.service';
 import { AiMockService } from './ai-mock.service';
 import { AiPublicController } from './ai-public.controller';
 import { AiTaskService } from './ai-task.service';
@@ -15,6 +16,7 @@ import { MiniMaxService } from './minimax.service';
   controllers: [AiController, AiPublicController],
   providers: [
     MiniMaxService,
+    AiConcurrencyService,
     AiMockService,
     AiTaskService,
     HostService,
@@ -22,6 +24,6 @@ import { MiniMaxService } from './minimax.service';
     CoverStorageService,
     PosterService,
   ],
-  exports: [MiniMaxService, AiTaskService, HostService],
+  exports: [MiniMaxService, AiConcurrencyService, AiTaskService, HostService],
 })
 export class AiModule {}

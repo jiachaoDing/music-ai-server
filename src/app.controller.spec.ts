@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { AiTaskService } from './ai/ai-task.service';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -8,7 +9,15 @@ describe('AppController', () => {
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
-      providers: [AppService],
+      providers: [
+        AppService,
+        {
+          provide: AiTaskService,
+          useValue: {
+            getQueueStatus: vi.fn(),
+          },
+        },
+      ],
     }).compile();
 
     appController = app.get<AppController>(AppController);
