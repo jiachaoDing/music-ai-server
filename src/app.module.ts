@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { AppController } from './app.controller';
+import { AI_QUEUE_STATUS_SERVICE, AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AdminModule } from './admin/admin.module';
 import { AiModule } from './ai/ai.module';
+import { AiTaskService } from './ai/ai-task.service';
 import { AuthModule } from './auth/auth.module';
 import { BattlesModule } from './battles/battles.module';
 import { CommunityModule } from './community/community.module';
@@ -32,6 +33,12 @@ import { UsersModule } from './users/users.module';
     QrModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: AI_QUEUE_STATUS_SERVICE,
+      useExisting: AiTaskService,
+    },
+  ],
 })
 export class AppModule {}

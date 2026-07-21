@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { AiTaskService } from './ai/ai-task.service';
-import { AppController } from './app.controller';
+import { AI_QUEUE_STATUS_SERVICE, AppController } from './app.controller';
 import { AppService } from './app.service';
 
 describe('AppController', () => {
@@ -12,7 +11,7 @@ describe('AppController', () => {
       providers: [
         AppService,
         {
-          provide: AiTaskService,
+          provide: AI_QUEUE_STATUS_SERVICE,
           useValue: {
             getQueueStatus: vi.fn(),
           },
