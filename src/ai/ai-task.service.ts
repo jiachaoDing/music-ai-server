@@ -19,7 +19,7 @@ import { AiMockService } from './ai-mock.service';
 import { AlbumRequestDto } from './dto/album-request.dto';
 import { LyricsRequestDto } from './dto/lyrics-request.dto';
 import { MusicRequestDto } from './dto/music-request.dto';
-import { MiniMaxService } from './minimax.service';
+import { AiRequestContext, MiniMaxService } from './minimax.service';
 
 const GENERATE_COST = 2;
 const ALBUM_COST = 5;
@@ -27,6 +27,7 @@ const REMIX_COST = 1;
 
 type CreateGeneratedSongOptions = {
   fileKey?: string;
+  taskId?: string;
   status?: string;
   published?: boolean;
   publishedAt?: Date | null;
@@ -45,9 +46,9 @@ export class AiTaskService {
     private readonly aiConcurrencyService: AiConcurrencyService,
   ) {}
 
-  async generateLyrics(dto: LyricsRequestDto) {
+  async generateLyrics(dto: LyricsRequestDto, context?: AiRequestContext) {
     try {
-      const result = await this.miniMaxService.generateLyrics(dto);
+      const result = await this.miniMaxService.generateLyrics(dto, context);
       const styles = dto.styles?.length
         ? dto.styles
         : result.style
@@ -80,7 +81,7 @@ export class AiTaskService {
       data: {
         type: 'generate',
         status: 'queued',
-        stage: queueAhead > 0 ? `queued (${queueAhead} ahead)` : 'queued',
+        stage: 'waiting_for_ai',
         progress: 10,
         queueAhead,
         userId: user.id,
@@ -88,11 +89,9 @@ export class AiTaskService {
       },
     });
 
-    void this.aiConcurrencyService
-      .run(() => this.processGenerateTask(task.id, dto, user), task.id)
-      .catch((error) =>
-        this.markTaskFailed(task.id, error, user.id, GENERATE_COST),
-      );
+    void this.processGenerateTask(task.id, dto, user).catch((error) =>
+      this.markTaskFailed(task.id, error, user.id, GENERATE_COST),
+    );
 
     return this.buildSubmitResponse(
       task.id,
@@ -107,35 +106,10 @@ export class AiTaskService {
     dto: MusicRequestDto,
     user: User,
   ) {
-    await this.prisma.aiTask.update({
-      where: { id: taskId },
-      data: {
-        status: 'running',
-        stage: 'running',
-        progress: 50,
-        queueAhead: 0,
-      },
-    });
-
     try {
-      await this.prisma.aiTask.update({
-        where: { id: taskId },
-        data: {
-          stage: 'generating cover',
-          progress: 70,
-        },
-      });
-
-      await this.prisma.aiTask.update({
-        where: { id: taskId },
-        data: {
-          stage: 'generating review',
-          progress: 90,
-        },
-      });
-
       const song = await this.createGeneratedSong(dto, user, {
         fileKey: taskId,
+        taskId,
       });
 
       await this.prisma.aiTask.update({
@@ -177,7 +151,10 @@ export class AiTaskService {
     options: CreateGeneratedSongOptions = {},
   ) {
     const result = await this.miniMaxService
-      .generateMusic(dto)
+      .generateMusic(
+        dto,
+        this.buildAiRequestContext(options.taskId, 'generating music', 40),
+      )
       .catch(() => this.mockService.generateMusic(dto));
     const audioUrl = await this.audioStorageService.persistAudio(
       result.audioUrl,
@@ -217,10 +194,13 @@ export class AiTaskService {
 
     let coverUrl: string | null = null;
     try {
-      const coverResult = await this.miniMaxService.generateCover({
-        title: dto.title,
-        style: dto.style,
-      });
+      const coverResult = await this.miniMaxService.generateCover(
+        {
+          title: dto.title,
+          style: dto.style,
+        },
+        this.buildAiRequestContext(options.taskId, 'generating cover', 70),
+      );
       if (coverResult.imageUrl) {
         const persistedUrl = await this.coverStorageService.persistCover(
           coverResult.imageUrl,
@@ -233,11 +213,14 @@ export class AiTaskService {
     let aiReview: string | null = null;
     if (!dto.isInstrumental) {
       try {
-        const reviewResult = await this.miniMaxService.generateReview({
-          title: dto.title,
-          style: dto.style,
-          lyrics: dto.lyrics,
-        });
+        const reviewResult = await this.miniMaxService.generateReview(
+          {
+            title: dto.title,
+            style: dto.style,
+            lyrics: dto.lyrics,
+          },
+          this.buildAiRequestContext(options.taskId, 'generating review', 90),
+        );
         aiReview = reviewResult?.text ?? null;
       } catch {}
     }
@@ -267,10 +250,7 @@ export class AiTaskService {
       data: {
         type: 'album',
         status: 'queued',
-        stage:
-          queueAhead > 0
-            ? `album queued (${queueAhead} ahead)`
-            : 'album queued',
+        stage: 'waiting_for_ai',
         progress: 5,
         queueAhead,
         userId: user.id,
@@ -278,11 +258,9 @@ export class AiTaskService {
       },
     });
 
-    void this.aiConcurrencyService
-      .run(() => this.processAlbumTask(task.id, dto, user), task.id)
-      .catch((error) =>
-        this.markTaskFailed(task.id, error, user.id, ALBUM_COST),
-      );
+    void this.processAlbumTask(task.id, dto, user).catch((error) =>
+      this.markTaskFailed(task.id, error, user.id, ALBUM_COST),
+    );
 
     return this.buildSubmitResponse(
       task.id,
@@ -300,16 +278,6 @@ export class AiTaskService {
     const trackCount = dto.trackCount ?? 4;
 
     try {
-      await this.prisma.aiTask.update({
-        where: { id: taskId },
-        data: {
-          status: 'running',
-          stage: 'album running',
-          progress: 10,
-          queueAhead: 0,
-        },
-      });
-
       const album = await this.prisma.album.create({
         data: {
           title: `${dto.theme} EP`,
@@ -332,7 +300,7 @@ export class AiTaskService {
         await this.prisma.aiTask.update({
           where: { id: taskId },
           data: {
-            stage: `creating track ${i}/${trackCount}`,
+            stage: `waiting for track ${i}/${trackCount} AI`,
             progress: Math.round((i / trackCount) * 80),
             result: {
               tracks: songs.map((s) => ({
@@ -345,18 +313,32 @@ export class AiTaskService {
           },
         });
 
-        const lyrics = await this.generateLyrics({
-          prompt: `${dto.theme} track ${i}`,
-          mode: 'song',
-        });
+        const lyrics = await this.generateLyrics(
+          {
+            prompt: `${dto.theme} track ${i}`,
+            mode: 'song',
+          },
+          this.buildAiRequestContext(
+            taskId,
+            `creating track ${i}/${trackCount}: generating lyrics`,
+            Math.max(10, Math.round(((i - 1) / trackCount) * 80)),
+          ),
+        );
         const styleText = lyrics.styles?.join(' / ') ?? 'pop';
 
         const music = await this.miniMaxService
-          .generateMusic({
-            title: lyrics.title,
-            style: styleText,
-            lyrics: lyrics.lyrics,
-          })
+          .generateMusic(
+            {
+              title: lyrics.title,
+              style: styleText,
+              lyrics: lyrics.lyrics,
+            },
+            this.buildAiRequestContext(
+              taskId,
+              `creating track ${i}/${trackCount}: generating music`,
+              Math.max(20, Math.round((i / trackCount) * 80)),
+            ),
+          )
           .catch(() =>
             this.mockService.generateMusic({
               title: lyrics.title,
@@ -463,10 +445,7 @@ export class AiTaskService {
       data: {
         type: 'remix',
         status: 'queued',
-        stage:
-          queueAhead > 0
-            ? `remix queued (${queueAhead} ahead)`
-            : 'remix queued',
+        stage: 'waiting_for_ai',
         progress: 10,
         queueAhead,
         userId: user.id,
@@ -474,21 +453,15 @@ export class AiTaskService {
       },
     });
 
-    void this.aiConcurrencyService
-      .run(
-        () =>
-          this.processRemixTask(
-            task.id,
-            originId,
-            user,
-            dto,
-            originalSong.title,
-          ),
-        task.id,
-      )
-      .catch((error) =>
-        this.markTaskFailed(task.id, error, user.id, REMIX_COST),
-      );
+    void this.processRemixTask(
+      task.id,
+      originId,
+      user,
+      dto,
+      originalSong.title,
+    ).catch((error) =>
+      this.markTaskFailed(task.id, error, user.id, REMIX_COST),
+    );
 
     return this.buildSubmitResponse(
       task.id,
@@ -505,25 +478,18 @@ export class AiTaskService {
     dto: { title?: string; style: string; lyrics?: string; prompt: string },
     originalTitle: string,
   ) {
-    await this.prisma.aiTask.update({
-      where: { id: taskId },
-      data: {
-        status: 'running',
-        stage: 'remix running',
-        progress: 50,
-        queueAhead: 0,
-      },
-    });
-
     try {
       const title =
         dto.title?.trim() || `${originalTitle} (${dto.style} version)`;
       const music = await this.miniMaxService
-        .generateMusic({
-          title,
-          style: dto.style,
-          lyrics: dto.lyrics ?? '',
-        })
+        .generateMusic(
+          {
+            title,
+            style: dto.style,
+            lyrics: dto.lyrics ?? '',
+          },
+          this.buildAiRequestContext(taskId, 'generating remix music', 50),
+        )
         .catch(() =>
           this.mockService.generateMusic({
             title,
@@ -723,6 +689,34 @@ export class AiTaskService {
       this.aiConcurrencyService.getActiveCount() +
       this.aiConcurrencyService.getPendingCount()
     );
+  }
+
+  private buildAiRequestContext(
+    taskId: string | undefined,
+    stage: string,
+    progress: number,
+  ): AiRequestContext | undefined {
+    if (!taskId) return undefined;
+    return {
+      taskId,
+      onStart: () => this.markTaskRunning(taskId, stage, progress),
+    };
+  }
+
+  private async markTaskRunning(
+    taskId: string,
+    stage: string,
+    progress: number,
+  ) {
+    await this.prisma.aiTask.update({
+      where: { id: taskId },
+      data: {
+        status: 'running',
+        stage,
+        progress,
+        queueAhead: 0,
+      },
+    });
   }
 
   private async getDynamicQueueAhead(task: { id: string; createdAt: Date }) {

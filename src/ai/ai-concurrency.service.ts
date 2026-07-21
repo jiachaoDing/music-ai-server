@@ -3,8 +3,14 @@ import { Injectable } from '@nestjs/common';
 type QueueItem<T> = {
   taskId?: string;
   handler: () => Promise<T>;
+  onStart?: () => Promise<void> | void;
   resolve: (value: T | PromiseLike<T>) => void;
   reject: (reason?: unknown) => void;
+};
+
+type RunOptions = {
+  taskId?: string;
+  onStart?: () => Promise<void> | void;
 };
 
 @Injectable()
@@ -15,11 +21,15 @@ export class AiConcurrencyService {
   private active = 0;
   private readonly queue: QueueItem<unknown>[] = [];
 
-  run<T>(handler: () => Promise<T>, taskId?: string): Promise<T> {
+  run<T>(handler: () => Promise<T>, options?: string | RunOptions): Promise<T> {
+    const runOptions =
+      typeof options === 'string' ? { taskId: options } : (options ?? {});
+
     return new Promise<T>((resolve, reject) => {
       this.queue.push({
-        taskId,
+        taskId: runOptions.taskId,
         handler,
+        onStart: runOptions.onStart,
         resolve: resolve as QueueItem<unknown>['resolve'],
         reject,
       });
@@ -52,6 +62,7 @@ export class AiConcurrencyService {
 
     this.active += 1;
     Promise.resolve()
+      .then(() => item.onStart?.())
       .then(item.handler)
       .then(item.resolve, item.reject)
       .finally(() => {

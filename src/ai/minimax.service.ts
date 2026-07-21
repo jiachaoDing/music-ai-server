@@ -5,50 +5,51 @@ import {
 } from '@nestjs/common';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
+import { AiConcurrencyService } from './ai-concurrency.service';
 import { CoverRequestDto } from './dto/cover-request.dto';
 import { LyricsRequestDto } from './dto/lyrics-request.dto';
 import { MusicRequestDto } from './dto/music-request.dto';
 
 type MiniMaxSdk = typeof import('../../node_modules/minimax-api/dist/index.js');
+type JsonObject = Record<string, unknown>;
+
+export type AiRequestContext = {
+  taskId?: string;
+  onStart?: () => Promise<void> | void;
+  retries?: number;
+  timeoutMs?: number;
+};
 
 const MINIMAX_BASE_URL = 'https://api.minimaxi.com';
 const TEXT_MODEL = 'MiniMax-M3';
 const MUSIC_MODEL = 'music-2.6';
 const IMAGE_MODEL = 'image-01';
 const TTS_MODEL = 'tts-1';
+const DEFAULT_RETRIES = 2;
+const DEFAULT_TIMEOUT_MS = 240000;
 const nodeRequire = createRequire(__filename);
 
 const MODE_PROMPTS: Record<string, string> = {
-  song: '你是专业中文流行歌曲创作人，擅长根据灵感创作动人旋律和歌词，风格多样，情感真挚。',
-  meme: '你是幽默音乐人，擅长将网络热梗和吐槽变成洗脑神曲，歌词要搞笑魔性，旋律抓耳。',
-  emotion:
-    '你是情感疗愈音乐人，擅长将复杂情绪转化为细腻温暖的歌词，风格抒情治愈，触动人心。',
-  photo:
-    '你是视觉音乐创作者，擅长根据图片内容创作意境匹配的歌曲，歌词要富有画面感。',
-  foryou:
-    '你是浪漫音乐人，擅长创作送给特定对象的专属歌曲，歌词要饱含深情和故事感，适合表白和纪念。',
+  song: 'Write a complete Chinese pop song with clear verse and chorus sections.',
+  meme: 'Turn the idea into a catchy and humorous Chinese meme song.',
+  emotion: 'Turn the emotion or diary-like input into a warm Chinese lyric.',
+  photo: 'Write a Chinese song based on the image and the extra instruction.',
+  foryou: 'Write a sincere Chinese song for the specified person.',
 };
 
 const STYLE_VOICE_MAP: Record<string, { voice_id: string; speed: number }> = {
-  '抒情': { voice_id: 'female-qingse', speed: 0.85 },
-  '治愈': { voice_id: 'female-qingse', speed: 0.9 },
-  'Lo-fi': { voice_id: 'male-qn-qingse', speed: 0.9 },
-  '民谣': { voice_id: 'male-qn-qingse', speed: 0.9 },
-  '摇滚': { voice_id: 'male-qn-jingying', speed: 1.1 },
-  '电子': { voice_id: 'female-shaonv', speed: 1.1 },
-  '欢快': { voice_id: 'female-shaonv', speed: 1.05 },
-  '伤感': { voice_id: 'female-qingse', speed: 0.85 },
-  '国风': { voice_id: 'female-yujie', speed: 0.9 },
-  '爵士': { voice_id: 'female-qingse', speed: 0.95 },
-  '说唱': { voice_id: 'male-qn-jingying', speed: 1.2 },
-  '流行': { voice_id: 'female-qingse', speed: 1.0 },
+  'lo-fi': { voice_id: 'male-qn-qingse', speed: 0.9 },
+  jazz: { voice_id: 'female-qingse', speed: 0.95 },
+  rock: { voice_id: 'male-qn-jingying', speed: 1.1 },
+  electronic: { voice_id: 'female-shaonv', speed: 1.1 },
+  pop: { voice_id: 'female-qingse', speed: 1.0 },
 };
-
-type JsonObject = Record<string, unknown>;
 
 @Injectable()
 export class MiniMaxService {
   private sdk: MiniMaxSdk | null = null;
+
+  constructor(private readonly aiConcurrencyService: AiConcurrencyService) {}
 
   getStatus() {
     return {
@@ -64,29 +65,29 @@ export class MiniMaxService {
     };
   }
 
-  async generateLyrics(dto: LyricsRequestDto) {
+  async generateLyrics(dto: LyricsRequestDto, context?: AiRequestContext) {
     try {
-      const client = this.getClient();
-      const mode = dto.mode || 'song';
-
       if (dto.image) {
-        return this.generateLyricsFromImage(dto, mode);
+        return this.generateLyricsFromImage(dto, context);
       }
 
       const wrappedPrompt = this.wrapLyricsPrompt(dto);
+      const response = await this.runProviderRequest(async () => {
+        const client = this.getClient();
+        return client.music.generateLyrics({
+          mode: 'write_full_song',
+          prompt: wrappedPrompt,
+        });
+      }, context);
 
-      const response = await client.music.generateLyrics({
-        mode: 'write_full_song',
-        prompt: wrappedPrompt,
-      });
       this.assertProviderSuccess(response.data);
       const lyrics = response.data.lyrics?.trim() || '';
       if (!lyrics) {
-        throw new BadGatewayException('MiniMax 歌词生成结果为空。');
+        throw new BadGatewayException('MiniMax lyrics response is empty');
       }
 
       return {
-        title: response.data.song_title?.trim() || '未命名',
+        title: response.data.song_title?.trim() || 'Untitled',
         style: response.data.style_tags?.trim() || '',
         lyrics,
         rawText: JSON.stringify(response.data),
@@ -96,210 +97,40 @@ export class MiniMaxService {
     }
   }
 
-  private wrapLyricsPrompt(dto: LyricsRequestDto): string {
-    const mode = dto.mode || 'song';
-    const prompt = dto.prompt || '';
-    const forWho = dto.forWho || '一个重要的人';
-
-    const wrappers: Record<string, (p: string) => string> = {
-      song: (p) => `创作一首中文歌曲，表达：${p}`,
-      meme: (p) =>
-        `把这个网络热梗/流行语写成一首洗脑魔性、副歌重复抓耳、适合传播的中文神曲：「${p}」`,
-      emotion: (p) =>
-        `把下面这段心情/日记/经历提炼升华成一首有画面感、有情绪张力的中文歌词：「${p}」`,
-      foryou: (p) =>
-        `为「${forWho}」写一首中文歌，要表达：「${p}」。真诚有故事感，副歌点题。`,
-      photo: (p) => `看这张图片，为它写一首中文歌。${p ? '额外要求：' + p : ''}`,
-    };
-
-    const wrapper = wrappers[mode] || wrappers.song;
-    return wrapper(prompt);
-  }
-
-  private parseLyricsResponse(rawText: string) {
-    const cleaned = rawText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    const jsonText = this.extractJsonText(cleaned);
-    const parsed = jsonText ? this.safeParseObject(jsonText) : null;
-    const jsonLyrics = this.pickString(parsed, 'lyrics');
-
-    const title =
-      this.pickString(parsed, 'title') ||
-      (cleaned.match(/标题[:：]\s*(.+)/) || [])[1] ||
-      '';
-    const style =
-      this.pickString(parsed, 'style') ||
-      (cleaned.match(/风格[:：]\s*(.+)/) || [])[1] ||
-      '';
-    const labelSplit = cleaned.split(/歌词[:：]/);
-    const sectionMatch = cleaned.match(/\[(?:Verse|Chorus|Bridge|Intro|Outro)[\s\S]*$/i);
-    const lyrics = (
-      jsonLyrics ||
-      (labelSplit.length > 1 ? labelSplit.slice(1).join('歌词：') : '') ||
-      sectionMatch?.[0] ||
-      ''
-    ).trim();
-
-    if (!lyrics) {
-      throw new BadGatewayException('MiniMax 歌词结果格式异常，请重新生成。');
-    }
-
-    return {
-      title: title.trim() || '未命名',
-      style: style.trim(),
-      lyrics,
-      rawText,
-    };
-  }
-
-  private async generateLyricsFromImage(
-    dto: LyricsRequestDto,
-    mode: string,
-  ) {
-    const apiKey = process.env.MINIMAX_API_KEY?.trim();
-    if (!apiKey) {
-      throw new ServiceUnavailableException('MINIMAX_API_KEY 未配置');
-    }
-    const extraPrompt = dto.prompt ? `额外要求：${dto.prompt}` : '';
-
-    const response = await fetch(`${MINIMAX_BASE_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: TEXT_MODEL,
-        max_completion_tokens: 1200,
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你是专业中文流行歌曲创作人。根据图片内容，先取一个歌名，再给出3-5个英文风格标签，然后写带[Verse][Chorus]段落的完整歌词。严格用如下格式输出：\n标题：xxx\n风格：xxx,xxx\n歌词：\n[Verse]...',
-          },
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: `看这张图片，为它写一首中文歌。${extraPrompt}`,
-              },
-              {
-                type: 'image_url',
-                image_url: { url: dto.image },
-              },
-            ],
-          },
-        ],
-      }),
-    });
-
-    const data = await response.json();
-    this.assertProviderSuccess(data);
-    const rawText = data.choices?.[0]?.message?.content?.trim() || '';
-    if (!rawText) {
-      throw new BadGatewayException('MiniMax 歌词生成结果为空。');
-    }
-    return this.parseLyricsResponse(rawText);
-  }
-
-  private parseImageLyrics(rawText: string) {
-    const cleaned = rawText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-    let title = (cleaned.match(/标题：(.+)/) || [])[1] || '';
-    if (!title) {
-      const titleMatch = cleaned.match(/^#\s*(.+)$/m);
-      title = titleMatch
-        ? titleMatch[1].replace(/[^\u4e00-\u9fa5a-zA-Z0-9\s]/g, '')
-        : '';
-    }
-
-    let style = (cleaned.match(/风格：(.+)/) || [])[1] || '';
-    if (!style) {
-      const styleMatch = cleaned.match(/\*\*Style:\*\*\s*(.+)$/m);
-      style = styleMatch ? styleMatch[1].replace(/\*/g, '') : '';
-    }
-
-    let lyrics = '';
-    const lyricsMatch = cleaned.split(/歌词：/);
-    if (lyricsMatch.length > 1) {
-      lyrics = lyricsMatch[1].trim();
-    } else {
-      const verseMatch = cleaned.match(/\[Verse[\s\S]*$/);
-      lyrics = verseMatch ? verseMatch[0].trim() : '';
-      if (!lyrics) {
-        const lines = cleaned
-          .split('\n')
-          .filter(
-            (line) =>
-              !line.startsWith('#') &&
-              !line.startsWith('**') &&
-              !line.startsWith('---') &&
-              line.trim(),
-          );
-        lyrics = lines.join('\n');
-      }
-    }
-
-    return {
-      title: title.trim() || '看图写的歌',
-      style: style.trim() || 'pop, emotional',
-      lyrics: lyrics || cleaned,
-      rawText,
-    };
-  }
-
-  private buildLyricsUserPrompt(dto: LyricsRequestDto): string {
-    let prompt = '请根据以下信息创作一首中文歌曲：\n';
-    prompt += `灵感：${dto.prompt}\n`;
-
-    if (dto.forWho) {
-      prompt += `写给：${dto.forWho}\n`;
-    }
-
-    if (dto.styles?.length) {
-      prompt += `风格：${dto.styles.join('、')}\n`;
-    }
-
-    prompt +=
-      '只返回JSON格式：{"title":"歌曲标题","style":"歌曲风格","lyrics":"完整歌词，包含[Verse][Chorus][Bridge]等段落标记"}';
-
-    return prompt;
-  }
-
   async generateHostTopic(vibe: {
     title: string;
     style: string;
     keyword: string;
   }) {
     try {
-      const client = this.getClient();
-      const response = await client.chat.createCompletion({
-        model: TEXT_MODEL,
-        max_completion_tokens: 300,
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你是 Echo AI 音乐社区的 AI 主理人。请为社区生成一个今日创作话题，鼓励用户用 AI 做一首歌。只返回 JSON，格式为 {"title":"话题名","emoji":"一个符号","desc":"60字以内的话题说明"}。',
-          },
-          {
-            role: 'user',
-            content: `今日灵感：${vibe.title}\n推荐风格：${vibe.style}\n关键词：${vibe.keyword}`,
-          },
-        ],
+      const response = await this.runProviderRequest(async () => {
+        const client = this.getClient();
+        return client.chat.createCompletion({
+          model: TEXT_MODEL,
+          max_completion_tokens: 300,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are the AI curator of a music community. Return JSON only: {"title":"","emoji":"","desc":""}.',
+            },
+            {
+              role: 'user',
+              content: `Topic seed: ${vibe.title}\nStyle: ${vibe.style}\nKeyword: ${vibe.keyword}`,
+            },
+          ],
+        });
       });
 
       this.assertProviderSuccess(response.data);
       const rawText = response.data.choices[0]?.message.content?.trim() || '';
-      const jsonText = this.extractJsonText(rawText);
-      const parsed = jsonText ? this.safeParseObject(jsonText) : null;
-
+      const parsed = this.safeParseObject(this.extractJsonText(rawText) ?? '');
       return {
         title: this.pickString(parsed, 'title') || vibe.title,
-        emoji: this.pickString(parsed, 'emoji') || '♪',
+        emoji: this.pickString(parsed, 'emoji') || '*',
         desc:
           this.pickString(parsed, 'desc') ||
-          `用 ${vibe.keyword} 写一首歌，风格可以靠近 ${vibe.style}。`,
+          `Create a song around ${vibe.keyword} in ${vibe.style}.`,
       };
     } catch (error) {
       this.handleMiniMaxError(error);
@@ -313,22 +144,24 @@ export class MiniMaxService {
     authorName?: string;
   }) {
     try {
-      const client = this.getClient();
       const lyricsPreview = song.lyrics ? song.lyrics.slice(0, 240) : '';
-      const response = await client.chat.createCompletion({
-        model: TEXT_MODEL,
-        max_completion_tokens: 220,
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你是 Echo AI 音乐社区的 AI 主理人。请给用户作品写一段温暖、具体、像社区翻牌一样的短评，30到60字，不要 Markdown，不要 JSON，不要使用引号。',
-          },
-          {
-            role: 'user',
-            content: `作品名：${song.title}\n作者：${song.authorName ?? '社区创作者'}\n风格：${song.style}\n歌词片段：${lyricsPreview}`,
-          },
-        ],
+      const response = await this.runProviderRequest(async () => {
+        const client = this.getClient();
+        return client.chat.createCompletion({
+          model: TEXT_MODEL,
+          max_completion_tokens: 220,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Write a short, warm music community curator comment in Chinese. No markdown and no JSON.',
+            },
+            {
+              role: 'user',
+              content: `Song: ${song.title}\nAuthor: ${song.authorName ?? 'creator'}\nStyle: ${song.style}\nLyrics preview: ${lyricsPreview}`,
+            },
+          ],
+        });
       });
 
       this.assertProviderSuccess(response.data);
@@ -336,11 +169,10 @@ export class MiniMaxService {
         response.data.choices[0]?.message.content
           ?.replace(/<think>[\s\S]*?<\/think>/gi, '')
           .trim() || '';
-
       return {
         text:
           text ||
-          `这首《${song.title}》有一种很真诚的表达，值得被更多人听见。`,
+          `This song, ${song.title}, has a sincere expression worth hearing.`,
       };
     } catch (error) {
       this.handleMiniMaxError(error);
@@ -353,39 +185,43 @@ export class MiniMaxService {
     keyword: string;
   }) {
     try {
-      const client = this.getClient();
-      const titleResponse = await client.chat.createCompletion({
-        model: TEXT_MODEL,
-        max_completion_tokens: 120,
-        messages: [
-          {
-            role: 'user',
-            content: `你是音乐社区 Echo 的主理人，要发一首今日主打歌。主题氛围是「${vibe.title}」。给这首歌起一个文艺、有记忆点的中文歌名，12字以内。直接输出歌名本身，不要书名号、不要引号、不要解释。`,
-          },
-        ],
+      const titleResponse = await this.runProviderRequest(async () => {
+        const client = this.getClient();
+        return client.chat.createCompletion({
+          model: TEXT_MODEL,
+          max_completion_tokens: 120,
+          messages: [
+            {
+              role: 'user',
+              content: `Name a Chinese song for this theme. Output only the title, max 12 Chinese characters.\nTheme: ${vibe.title}\nKeyword: ${vibe.keyword}`,
+            },
+          ],
+        });
       });
+
       this.assertProviderSuccess(titleResponse.data);
       const title =
         titleResponse.data.choices[0]?.message.content
           ?.replace(/<think>[\s\S]*?<\/think>/gi, '')
-          .replace(/[《》“”"']/g, '')
+          .replace(/[《》"'`]/g, '')
           .split('\n')[0]
           .trim()
           .slice(0, 12) || vibe.title.slice(0, 12);
 
-      const lyricsResponse = await client.chat.createCompletion({
-        model: TEXT_MODEL,
-        max_completion_tokens: 1600,
-        messages: [
-          {
-            role: 'user',
-            content: `你是顶级华语作词人。围绕主题「${vibe.title}」（关键词：${vibe.keyword}）写一首完整、动人的中文歌词。要求：
-1. 用 [Verse] / [Chorus] / [Bridge] 分段，至少包含两段 Verse、两段 Chorus、一段 Bridge。
-2. 副歌要有记忆点、可传唱，主歌叙事有画面。
-3. 只输出歌词本身，保留 [Verse]/[Chorus]/[Bridge] 标签，不要标题、不要解释。`,
-          },
-        ],
+      const lyricsResponse = await this.runProviderRequest(async () => {
+        const client = this.getClient();
+        return client.chat.createCompletion({
+          model: TEXT_MODEL,
+          max_completion_tokens: 1600,
+          messages: [
+            {
+              role: 'user',
+              content: `Write complete Chinese lyrics with [Verse], [Chorus] and [Bridge].\nTheme: ${vibe.title}\nKeyword: ${vibe.keyword}`,
+            },
+          ],
+        });
       });
+
       this.assertProviderSuccess(lyricsResponse.data);
       const lyrics =
         lyricsResponse.data.choices[0]?.message.content
@@ -402,28 +238,34 @@ export class MiniMaxService {
     }
   }
 
-  async generateReview(song: {
-    title: string;
-    style: string;
-    lyrics?: string;
-  }) {
+  async generateReview(
+    song: {
+      title: string;
+      style: string;
+      lyrics?: string;
+    },
+    context?: AiRequestContext,
+  ) {
     try {
-      const client = this.getClient();
-      const response = await client.chat.createCompletion({
-        model: TEXT_MODEL,
-        max_completion_tokens: 200,
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你是 Echo AI 音乐社区的 AI 主理人，擅长用简短精炼的语言写乐评。乐评要富有感染力，1-2句话即可，带🤖标识。',
-          },
-          {
-            role: 'user',
-            content: `请为歌曲《${song.title}》（风格：${song.style}）写一段简短乐评。`,
-          },
-        ],
-      });
+      const response = await this.runProviderRequest(async () => {
+        const client = this.getClient();
+        return client.chat.createCompletion({
+          model: TEXT_MODEL,
+          max_completion_tokens: 200,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Write a concise Chinese music review in one or two sentences.',
+            },
+            {
+              role: 'user',
+              content: `Song: ${song.title}\nStyle: ${song.style}\nLyrics: ${song.lyrics ?? ''}`,
+            },
+          ],
+        });
+      }, context);
+
       this.assertProviderSuccess(response.data);
       const text = response.data.choices[0]?.message.content?.trim() || '';
       return { text };
@@ -438,30 +280,32 @@ export class MiniMaxService {
     lyrics?: string;
   }) {
     try {
-      const client = this.getClient();
-      const response = await client.chat.createCompletion({
-        model: TEXT_MODEL,
-        max_completion_tokens: 300,
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你是 Echo AI 音乐社区的 AI 主理人，擅长为歌曲生成吸引人的发布文案和标签。返回JSON格式：{"description":"简介","tags":["标签1","标签2","标签3"]}。',
-          },
-          {
-            role: 'user',
-            content: `请为歌曲《${song.title}》（风格：${song.style}）生成发布文案和3个标签。`,
-          },
-        ],
+      const response = await this.runProviderRequest(async () => {
+        const client = this.getClient();
+        return client.chat.createCompletion({
+          model: TEXT_MODEL,
+          max_completion_tokens: 300,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Return JSON only: {"description":"short Chinese publish copy","tags":["tag1","tag2","tag3"]}.',
+            },
+            {
+              role: 'user',
+              content: `Song: ${song.title}\nStyle: ${song.style}\nLyrics: ${song.lyrics ?? ''}`,
+            },
+          ],
+        });
       });
+
       this.assertProviderSuccess(response.data);
       const rawText = response.data.choices[0]?.message.content?.trim() || '';
-      const jsonText = this.extractJsonText(rawText);
-      const parsed = jsonText ? this.safeParseObject(jsonText) : null;
+      const parsed = this.safeParseObject(this.extractJsonText(rawText) ?? '');
       return {
         description: this.pickString(parsed, 'description') || '',
         tags: Array.isArray(parsed?.tags)
-          ? parsed.tags.map((t: unknown) => String(t))
+          ? parsed.tags.map((tag: unknown) => String(tag))
           : [],
       };
     } catch (error) {
@@ -469,60 +313,57 @@ export class MiniMaxService {
     }
   }
 
-  async generateDjScript(song: {
-    title: string;
-    style: string;
-    lyrics?: string;
-    authorName?: string;
-  }) {
+  async generateDjScript(
+    song: {
+      title: string;
+      style: string;
+      lyrics?: string;
+      authorName?: string;
+    },
+    context?: AiRequestContext,
+  ) {
     try {
       const apiKey = process.env.MINIMAX_API_KEY?.trim();
       if (!apiKey) {
-        throw new ServiceUnavailableException('MINIMAX_API_KEY 未配置');
+        throw new ServiceUnavailableException('MINIMAX_API_KEY is not set');
       }
 
-      const lyricsPreview = song.lyrics
-        ? song.lyrics.slice(0, 100)
-        : '';
-
-      console.log('[DJ脚本] 开始生成:', { title: song.title, style: song.style });
-
-      const response = await fetch(`${MINIMAX_BASE_URL}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: TEXT_MODEL,
-          max_completion_tokens: 300,
-          temperature: 0.8,
-          messages: [
-            {
-              role: 'system',
-              content:
-                '你是 Echo AI 音乐社区的 AI DJ，擅长用富有感染力的语言介绍歌曲。播报内容要简短（60-80字），自然流畅，有电台主播的感觉。结合歌曲的风格和歌词意境，营造独特的氛围。不要使用Markdown格式。',
+      const lyricsPreview = song.lyrics ? song.lyrics.slice(0, 100) : '';
+      const data = await this.runProviderRequest(async () => {
+        const response = await fetch(
+          `${MINIMAX_BASE_URL}/v1/chat/completions`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${apiKey}`,
             },
-            {
-              role: 'user',
-              content: `请为歌曲《${song.title}》（风格：${song.style}）创作一段 DJ 播报开场白。${
-                lyricsPreview ? `歌词片段：${lyricsPreview}` : ''
-              }`,
-            },
-          ],
-        }),
-      });
+            body: JSON.stringify({
+              model: TEXT_MODEL,
+              max_completion_tokens: 300,
+              temperature: 0.8,
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'Write a 60-80 character Chinese AI DJ intro for a song. No markdown.',
+                },
+                {
+                  role: 'user',
+                  content: `Song: ${song.title}\nStyle: ${song.style}\nLyrics preview: ${lyricsPreview}`,
+                },
+              ],
+            }),
+          },
+        );
+        return this.parseFetchJson(response);
+      }, context);
 
-      const data = await response.json();
-      console.log('[DJ脚本] API响应:', JSON.stringify(data, null, 2));
       this.assertProviderSuccess(data);
-
       const rawText = data.choices?.[0]?.message?.content?.trim() || '';
       const text = rawText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      console.log('[DJ脚本] 生成成功:', { text });
       return { text };
     } catch (error) {
-      console.error('[DJ脚本] 生成失败:', error);
       this.handleMiniMaxError(error);
     }
   }
@@ -530,90 +371,64 @@ export class MiniMaxService {
   async generateTts(
     text: string,
     style?: string,
+    context?: AiRequestContext,
   ): Promise<string> {
     try {
-      const client = this.getClient();
-      const voiceConfig = this.resolveVoiceConfig(style);
+      const response = await this.runProviderRequest(async () => {
+        const client = this.getClient();
+        const voiceConfig = this.resolveVoiceConfig(style);
+        return client.speech.synthesize({
+          model: 'speech-2.8-hd',
+          text,
+          voice_setting: {
+            voice_id: voiceConfig.voice_id,
+            speed: voiceConfig.speed,
+          },
+          audio_setting: {
+            sample_rate: 32000,
+            format: 'mp3',
+          },
+        });
+      }, context);
 
-      const response = await client.speech.synthesize({
-        model: 'speech-2.8-hd',
-        text,
-        voice_setting: {
-          voice_id: voiceConfig.voice_id,
-          speed: voiceConfig.speed,
-        },
-        audio_setting: {
-          sample_rate: 32000,
-          format: 'mp3',
-        },
-      });
       this.assertProviderSuccess(response.data);
       const data = response.data.data as { audio_url?: string; audio?: string };
-
-      if (data.audio_url) {
-        return data.audio_url;
-      }
-
+      if (data.audio_url) return data.audio_url;
       if (data.audio) {
-        const hexString = data.audio;
-        const buffer = Buffer.from(hexString, 'hex');
-        const base64 = buffer.toString('base64');
-        return `data:audio/mp3;base64,${base64}`;
+        const buffer = Buffer.from(data.audio, 'hex');
+        return `data:audio/mp3;base64,${buffer.toString('base64')}`;
       }
-
       return '';
     } catch (error) {
       this.handleMiniMaxError(error);
     }
   }
 
-  private resolveVoiceConfig(style?: string): {
-    voice_id: string;
-    speed: number;
-  } {
-    if (!style) {
-      return {
-        voice_id: 'Chinese (Mandarin)_Lyrical_Voice',
-        speed: 1.0,
-      };
-    }
-
-    const styleKeys = Object.keys(STYLE_VOICE_MAP);
-    for (const key of styleKeys) {
-      if (style.includes(key)) {
-        return STYLE_VOICE_MAP[key];
-      }
-    }
-
-    return {
-      voice_id: 'Chinese (Mandarin)_Lyrical_Voice',
-      speed: 1.0,
-    };
-  }
-
-  async generateMusic(dto: MusicRequestDto) {
+  async generateMusic(dto: MusicRequestDto, context?: AiRequestContext) {
     try {
-      const client = this.getClient();
       const isInstrumental = dto.isInstrumental ?? !dto.lyrics?.trim();
       const musicPrompt = isInstrumental
         ? `${dto.style}, instrumental, no vocals, background music, ambient, melody only`
         : dto.style;
-
       const lyrics = isInstrumental
         ? '[Instrumental]\nThis is instrumental background music without vocals.'
         : dto.lyrics || '';
 
-      const response = await client.music.generate({
-        model: MUSIC_MODEL,
-        prompt: musicPrompt,
-        lyrics,
-        audio_setting: {
-          sample_rate: 44100,
-          bitrate: 256000,
-          format: 'mp3',
-        },
-        output_format: 'url',
-      });
+      const response = await this.runProviderRequest(async () => {
+        const client = this.getClient();
+        return client.music.generate({
+          model: MUSIC_MODEL,
+          prompt: musicPrompt,
+          lyrics,
+          audio_setting: {
+            sample_rate: 44100,
+            bitrate: 256000,
+            format: 'mp3',
+          },
+          output_format: 'url',
+        });
+      }, context);
+
       this.assertProviderSuccess(response.data);
       const durationMs =
         response.data.extra_info?.music_duration ??
@@ -638,20 +453,23 @@ export class MiniMaxService {
     }
   }
 
-  async generateCover(dto: CoverRequestDto) {
+  async generateCover(dto: CoverRequestDto, context?: AiRequestContext) {
     try {
-      const client = this.getClient();
       const prompt =
         dto.prompt?.trim() ||
         `Album cover art, ${dto.title ?? 'Chinese song'}, ${dto.style ?? 'warm pop music'}, no text, high quality`;
-      const response = await client.image.generateFromText({
-        model: IMAGE_MODEL,
-        prompt,
-        aspect_ratio: '1:1',
-        response_format: 'url',
-      });
-      this.assertProviderSuccess(response.data);
 
+      const response = await this.runProviderRequest(async () => {
+        const client = this.getClient();
+        return client.image.generateFromText({
+          model: IMAGE_MODEL,
+          prompt,
+          aspect_ratio: '1:1',
+          response_format: 'url',
+        });
+      }, context);
+
+      this.assertProviderSuccess(response.data);
       return {
         status: 'generated',
         imageUrl: response.data.data.image_urls?.[0] ?? null,
@@ -662,6 +480,239 @@ export class MiniMaxService {
     }
   }
 
+  private async generateLyricsFromImage(
+    dto: LyricsRequestDto,
+    context?: AiRequestContext,
+  ) {
+    const apiKey = process.env.MINIMAX_API_KEY?.trim();
+    if (!apiKey) {
+      throw new ServiceUnavailableException('MINIMAX_API_KEY is not set');
+    }
+
+    const data = await this.runProviderRequest(async () => {
+      const response = await fetch(`${MINIMAX_BASE_URL}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: TEXT_MODEL,
+          max_completion_tokens: 1200,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Write a Chinese song from the image. Return title, style and lyrics with [Verse] and [Chorus].',
+            },
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `Extra instruction: ${dto.prompt ?? ''}`,
+                },
+                {
+                  type: 'image_url',
+                  image_url: { url: dto.image },
+                },
+              ],
+            },
+          ],
+        }),
+      });
+      return this.parseFetchJson(response);
+    }, context);
+
+    this.assertProviderSuccess(data);
+    const rawText = data.choices?.[0]?.message?.content?.trim() || '';
+    if (!rawText) {
+      throw new BadGatewayException('MiniMax lyrics response is empty');
+    }
+    return this.parseLyricsResponse(rawText);
+  }
+
+  private wrapLyricsPrompt(dto: LyricsRequestDto): string {
+    const mode = dto.mode || 'song';
+    const basePrompt = MODE_PROMPTS[mode] || MODE_PROMPTS.song;
+    const styles = dto.styles?.length
+      ? `\nPreferred styles: ${dto.styles.join(', ')}`
+      : '';
+    const forWho = dto.forWho ? `\nWrite for: ${dto.forWho}` : '';
+    return `${basePrompt}\nIdea: ${dto.prompt || ''}${styles}${forWho}\nReturn a complete lyric with title and style tags.`;
+  }
+
+  private parseLyricsResponse(rawText: string) {
+    const cleaned = rawText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    const jsonText = this.extractJsonText(cleaned);
+    const parsed = jsonText ? this.safeParseObject(jsonText) : null;
+    const jsonLyrics = this.pickString(parsed, 'lyrics');
+    const title =
+      this.pickString(parsed, 'title') ||
+      (cleaned.match(/title[:\s]+(.+)/i) || [])[1] ||
+      '';
+    const style =
+      this.pickString(parsed, 'style') ||
+      (cleaned.match(/style[:\s]+(.+)/i) || [])[1] ||
+      '';
+    const sectionMatch = cleaned.match(
+      /\[(?:Verse|Chorus|Bridge|Intro|Outro)[\s\S]*$/i,
+    );
+    const lyrics = (jsonLyrics || sectionMatch?.[0] || cleaned).trim();
+
+    if (!lyrics) {
+      throw new BadGatewayException(
+        'MiniMax lyrics response format is invalid',
+      );
+    }
+
+    return {
+      title: title.trim() || 'Untitled',
+      style: style.trim(),
+      lyrics,
+      rawText,
+    };
+  }
+
+  private resolveVoiceConfig(style?: string): {
+    voice_id: string;
+    speed: number;
+  } {
+    if (!style) {
+      return {
+        voice_id: 'Chinese (Mandarin)_Lyrical_Voice',
+        speed: 1.0,
+      };
+    }
+
+    const lowerStyle = style.toLowerCase();
+    for (const key of Object.keys(STYLE_VOICE_MAP)) {
+      if (lowerStyle.includes(key.toLowerCase())) {
+        return STYLE_VOICE_MAP[key];
+      }
+    }
+
+    return {
+      voice_id: 'Chinese (Mandarin)_Lyrical_Voice',
+      speed: 1.0,
+    };
+  }
+
+  private runProviderRequest<T>(
+    handler: () => Promise<T>,
+    context?: AiRequestContext,
+  ) {
+    return this.aiConcurrencyService.run(
+      () =>
+        this.runWithRetry(handler, {
+          retries: context?.retries ?? DEFAULT_RETRIES,
+          timeoutMs: context?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        }),
+      {
+        taskId: context?.taskId,
+        onStart: context?.onStart,
+      },
+    );
+  }
+
+  private async runWithRetry<T>(
+    handler: () => Promise<T>,
+    options: { retries: number; timeoutMs: number },
+  ) {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= options.retries; attempt += 1) {
+      try {
+        const result = await this.withTimeout(handler(), options.timeoutMs);
+        if (result === null || result === undefined) {
+          throw new BadGatewayException('MiniMax empty response');
+        }
+        return result;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= options.retries || !this.shouldRetry(error)) {
+          throw error;
+        }
+        await this.sleep(500 * (attempt + 1));
+      }
+    }
+
+    throw lastError;
+  }
+
+  private withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(
+          new BadGatewayException(
+            `MiniMax request timeout after ${timeoutMs}ms`,
+          ),
+        );
+      }, timeoutMs);
+
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+  }
+
+  private async parseFetchJson(response: Response) {
+    if (!response.ok) {
+      throw new BadGatewayException(`MiniMax HTTP ${response.status}`);
+    }
+    const data = (await response.json()) as JsonObject;
+    if (!data || Object.keys(data).length === 0) {
+      throw new BadGatewayException('MiniMax empty response');
+    }
+    return data;
+  }
+
+  private shouldRetry(error: unknown) {
+    const status = this.getErrorStatus(error);
+    if (status === 429 || (status >= 500 && status < 600)) return true;
+
+    const message =
+      error instanceof Error
+        ? error.message.toLowerCase()
+        : String(error).toLowerCase();
+    return (
+      message.includes('429') ||
+      message.includes('rate') ||
+      message.includes('limit') ||
+      message.includes('timeout') ||
+      message.includes('timed out') ||
+      message.includes('econnreset') ||
+      message.includes('etimedout') ||
+      message.includes('empty response') ||
+      /\b5\d\d\b/.test(message)
+    );
+  }
+
+  private getErrorStatus(error: unknown) {
+    const candidate = error as {
+      status?: number;
+      response?: { status?: number };
+      getStatus?: () => number;
+    };
+    return (
+      candidate.getStatus?.() ??
+      candidate.status ??
+      candidate.response?.status ??
+      0
+    );
+  }
+
+  private sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   private hasApiKey() {
     return Boolean(process.env.MINIMAX_API_KEY?.trim());
   }
@@ -670,7 +721,7 @@ export class MiniMaxService {
     const apiKey = process.env.MINIMAX_API_KEY?.trim();
     if (!apiKey) {
       throw new ServiceUnavailableException(
-        'MINIMAX_API_KEY 未配置，请在后端 .env 或服务器 SERVER_ENV 中配置。',
+        'MINIMAX_API_KEY is not set. Configure it in backend .env or server environment.',
       );
     }
     return this.getSdk().MiniMaxClient.create({
@@ -699,7 +750,9 @@ export class MiniMaxService {
   }) {
     const baseResp = payload.base_resp;
     if (baseResp && baseResp.status_code !== 0) {
-      throw new BadGatewayException(`MiniMax 请求失败：${baseResp.status_msg}`);
+      throw new BadGatewayException(
+        `MiniMax request failed: ${baseResp.status_msg}`,
+      );
     }
   }
 
@@ -711,27 +764,18 @@ export class MiniMaxService {
       throw error;
     }
     if (error instanceof this.getSdk().MiniMaxError) {
-      throw new BadGatewayException(`MiniMax 请求失败：${error.message}`);
+      throw new BadGatewayException(`MiniMax request failed: ${error.message}`);
     }
     if (error instanceof Error) {
-      throw new BadGatewayException(`MiniMax 请求失败：${error.message}`);
+      throw new BadGatewayException(`MiniMax request failed: ${error.message}`);
     }
-    throw new BadGatewayException('MiniMax 请求失败：未知错误');
+    throw new BadGatewayException(
+      'MiniMax request failed with an unknown error',
+    );
   }
 
   private parseLyrics(rawText: string) {
-    const jsonText = this.extractJsonText(rawText);
-    const parsed = jsonText ? this.safeParseObject(jsonText) : null;
-    const title = this.pickString(parsed, 'title') || 'AI 生成歌曲';
-    const style = this.pickString(parsed, 'style') || '中文流行';
-    const lyrics = this.pickString(parsed, 'lyrics') || rawText;
-
-    return {
-      title,
-      style,
-      lyrics,
-      rawText,
-    };
+    return this.parseLyricsResponse(rawText);
   }
 
   private extractJsonText(text: string) {
