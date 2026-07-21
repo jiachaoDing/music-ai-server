@@ -1,47 +1,68 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { User } from '@prisma/client';
+import { Battle, User } from '@prisma/client';
 import { mapSong } from '../common/utils/song-mapper';
 import { PrismaService } from '../prisma/prisma.service';
+
+type BattleWithCreator = Battle & {
+  creator: {
+    id: string;
+    name: string;
+  };
+};
 
 @Injectable()
 export class BattlesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list() {
+  async list(currentUser?: User) {
     const battles = await this.prisma.battle.findMany({
       where: { status: 'active' },
       orderBy: { createdAt: 'desc' },
+      include: {
+        creator: {
+          select: { id: true, name: true },
+        },
+      },
     });
-
-    const songIds = battles.flatMap((b) => [b.aId, b.bId]);
-    const songs = await this.prisma.song.findMany({
-      where: { id: { in: songIds } },
-    });
-    const songMap = new Map(songs.map((s) => [s.id, mapSong(s)]));
 
     return {
-      list: battles.map((b) => ({
-        id: b.id,
-        topic: b.topic,
-        songA: songMap.get(b.aId) ?? null,
-        songB: songMap.get(b.bId) ?? null,
-        votesA: b.aVotes,
-        votesB: b.bVotes,
-        status: b.status,
-      })),
+      list: await this.mapBattles(battles, currentUser),
     };
+  }
+
+  async findOne(battleId: string, currentUser?: User) {
+    const battle = await this.prisma.battle.findUnique({
+      where: { id: battleId },
+      include: {
+        creator: {
+          select: { id: true, name: true },
+        },
+      },
+    });
+    if (!battle) throw new NotFoundException('擂台不存在');
+
+    const [mapped] = await this.mapBattles([battle], currentUser);
+    return { battle: mapped };
   }
 
   async create(user: User, topic: string, aId: string, bId: string) {
     if (aId === bId) throw new BadRequestException('对战作品不能相同');
     const battle = await this.prisma.battle.create({
       data: { topic, aId, bId, createdBy: user.id },
+      include: {
+        creator: {
+          select: { id: true, name: true },
+        },
+      },
     });
-    return { battle };
+
+    const [mapped] = await this.mapBattles([battle], user);
+    return { battle: mapped };
   }
 
   async vote(battleId: string, user: User, side: 'A' | 'B') {
@@ -72,6 +93,98 @@ export class BattlesService {
       voted: true,
       votesA: updated.aVotes,
       votesB: updated.bVotes,
+    };
+  }
+
+  async remove(battleId: string, user: User) {
+    const battle = await this.prisma.battle.findUnique({
+      where: { id: battleId },
+    });
+    if (!battle) throw new NotFoundException('擂台不存在');
+
+    const isAdmin = user.role === 'admin';
+    if (battle.createdBy !== user.id && !isAdmin) {
+      throw new ForbiddenException('你无权删除该擂台');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.battleVote.deleteMany({ where: { battleId } });
+      await tx.battle.delete({ where: { id: battleId } });
+    });
+
+    return {
+      success: true,
+      message: '擂台删除成功',
+      battleId,
+    };
+  }
+
+  private async mapBattles(battles: BattleWithCreator[], currentUser?: User) {
+    const songIds = battles.flatMap((battle) => [battle.aId, battle.bId]);
+    const songs = songIds.length
+      ? await this.prisma.song.findMany({
+          where: { id: { in: songIds } },
+        })
+      : [];
+    const songMap = new Map(songs.map((song) => [song.id, mapSong(song)]));
+
+    const voteMap = new Map<string, 'A' | 'B'>();
+    if (currentUser && battles.length) {
+      const votes = await this.prisma.battleVote.findMany({
+        where: {
+          userId: currentUser.id,
+          battleId: { in: battles.map((battle) => battle.id) },
+        },
+        select: { battleId: true, side: true },
+      });
+      for (const vote of votes) {
+        if (vote.side === 'A' || vote.side === 'B') {
+          voteMap.set(vote.battleId, vote.side);
+        }
+      }
+    }
+
+    return battles.map((battle) =>
+      this.mapBattleRow(
+        battle,
+        songMap,
+        currentUser,
+        voteMap.get(battle.id) ?? null,
+      ),
+    );
+  }
+
+  private mapBattleRow(
+    battle: BattleWithCreator,
+    songMap: Map<string, ReturnType<typeof mapSong>>,
+    currentUser?: User,
+    votedSide?: 'A' | 'B' | null,
+  ) {
+    const isOwner = currentUser ? battle.createdBy === currentUser.id : false;
+
+    return {
+      id: battle.id,
+      topic: battle.topic,
+      aId: battle.aId,
+      bId: battle.bId,
+      songA: songMap.get(battle.aId) ?? null,
+      songB: songMap.get(battle.bId) ?? null,
+      votesA: battle.aVotes,
+      votesB: battle.bVotes,
+      aVotes: battle.aVotes,
+      bVotes: battle.bVotes,
+      createdBy: battle.createdBy,
+      creatorId: battle.createdBy,
+      creator: {
+        id: battle.creator.id,
+        username: battle.creator.name,
+        nickname: battle.creator.name,
+      },
+      isOwner,
+      status: battle.status,
+      createdAt: battle.createdAt.toISOString(),
+      updatedAt: battle.updatedAt.toISOString(),
+      votedSide: votedSide ?? undefined,
     };
   }
 }
