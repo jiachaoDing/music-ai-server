@@ -392,7 +392,7 @@ export class AiTaskService {
   async submitRemix(
     originId: string,
     user: User,
-    dto: { style: string; lyrics?: string; prompt: string },
+    dto: { title?: string; style: string; lyrics?: string; prompt: string },
   ) {
     await this.adminService.deductPoints(user.id, -1, '二创 / 翻唱');
 
@@ -426,7 +426,7 @@ export class AiTaskService {
     taskId: string,
     originId: string,
     user: User,
-    dto: { style: string; lyrics?: string; prompt: string },
+    dto: { title?: string; style: string; lyrics?: string; prompt: string },
     originalTitle: string,
   ) {
     await this.prisma.aiTask.update({
@@ -435,7 +435,7 @@ export class AiTaskService {
     });
 
     try {
-      const title = `${originalTitle}（${dto.style}版）`;
+      const title = dto.title?.trim() || `${originalTitle}（${dto.style}版）`;
       const music = await this.miniMaxService
         .generateMusic({
           title,
