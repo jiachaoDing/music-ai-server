@@ -9,9 +9,14 @@ import { JwtService } from '@nestjs/jwt';
 import { User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { LIKED_PLAYLIST_COLOR, LIKED_PLAYLIST_NAME } from '../common/constants';
+import { generateInviteCodes } from '../common/utils/invite-code';
 import { mapUser } from '../common/utils/user-mapper';
 import { PrismaService } from '../prisma/prisma.service';
-import { REGISTER_BONUS_POINTS } from './constants';
+import {
+  INVITED_BONUS_POINTS,
+  INVITER_BONUS_POINTS,
+  REGISTER_BONUS_POINTS,
+} from './constants';
 import { AuthResponseDto, UserProfileDto } from './dto/auth-response.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -34,30 +39,46 @@ export class AuthService {
 
     const invite = await this.prisma.inviteCode.findUnique({
       where: { code: dto.inviteCode },
+      include: { creator: { select: { id: true, role: true } } },
     });
     if (!invite || invite.status !== 'unused') {
       throw new BadRequestException('邀请码无效或已被使用');
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
+    const inviterId = invite.creator.role === 'admin' ? null : invite.createdBy;
+    const initialPoints =
+      REGISTER_BONUS_POINTS + (inviterId ? INVITED_BONUS_POINTS : 0);
+    const newInviteCodes = generateInviteCodes();
 
     const user = await this.prisma.$transaction(async (tx) => {
       const created = await tx.user.create({
         data: {
           name: dto.nickname,
           passwordHash,
-          points: REGISTER_BONUS_POINTS,
-          invitedBy: invite.createdBy,
+          points: initialPoints,
+          invitedBy: inviterId,
         },
       });
 
-      await tx.inviteCode.update({
-        where: { id: invite.id },
+      const claimedInvite = await tx.inviteCode.updateMany({
+        where: { id: invite.id, status: 'unused', usedBy: null },
         data: {
           status: 'used',
           usedBy: created.id,
           usedAt: new Date(),
         },
+      });
+      if (claimedInvite.count !== 1) {
+        throw new BadRequestException('邀请码已被使用');
+      }
+
+      await tx.inviteCode.createMany({
+        data: newInviteCodes.map((code) => ({
+          code,
+          createdBy: created.id,
+          status: 'unused',
+        })),
       });
 
       await tx.pointsLedger.create({
@@ -68,6 +89,31 @@ export class AuthService {
           balance: REGISTER_BONUS_POINTS,
         },
       });
+
+      if (inviterId) {
+        await tx.pointsLedger.create({
+          data: {
+            userId: created.id,
+            delta: INVITED_BONUS_POINTS,
+            reason: '受邀加入奖励',
+            balance: initialPoints,
+          },
+        });
+
+        const inviter = await tx.user.update({
+          where: { id: inviterId },
+          data: { points: { increment: INVITER_BONUS_POINTS } },
+          select: { points: true },
+        });
+        await tx.pointsLedger.create({
+          data: {
+            userId: inviterId,
+            delta: INVITER_BONUS_POINTS,
+            reason: '成功邀请好友',
+            balance: inviter.points,
+          },
+        });
+      }
 
       await tx.playlist.create({
         data: {

@@ -73,7 +73,7 @@ export class AiTaskService {
     const points = await this.adminService.deductPoints(
       user.id,
       -GENERATE_COST,
-      'generate song',
+      '生成歌曲',
     );
 
     const queueAhead = this.getCurrentQueueAhead();
@@ -140,7 +140,7 @@ export class AiTaskService {
         taskId,
         user.id,
         GENERATE_COST,
-        'generate song refund',
+        '生成歌曲失败退款',
       );
     }
   }
@@ -242,7 +242,7 @@ export class AiTaskService {
     const points = await this.adminService.deductPoints(
       user.id,
       -ALBUM_COST,
-      'generate album',
+      '生成专辑',
     );
 
     const queueAhead = this.getCurrentQueueAhead();
@@ -419,7 +419,7 @@ export class AiTaskService {
         taskId,
         user.id,
         ALBUM_COST,
-        'album generation refund',
+        '生成专辑失败退款',
       );
     }
   }
@@ -437,7 +437,7 @@ export class AiTaskService {
     const points = await this.adminService.deductPoints(
       user.id,
       -REMIX_COST,
-      'remix',
+      '翻唱二创',
     );
 
     const queueAhead = this.getCurrentQueueAhead();
@@ -557,7 +557,7 @@ export class AiTaskService {
           }),
         },
       });
-      await this.refundTaskCost(taskId, user.id, REMIX_COST, 'remix refund');
+      await this.refundTaskCost(taskId, user.id, REMIX_COST, '翻唱二创失败退款');
     }
   }
 
@@ -775,7 +775,7 @@ export class AiTaskService {
       },
     });
     if (userId && cost > 0) {
-      await this.refundTaskCost(taskId, userId, cost, 'AI task refund');
+      await this.refundTaskCost(taskId, userId, cost, 'AI 任务失败退款');
     }
   }
 
