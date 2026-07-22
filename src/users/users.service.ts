@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { User } from '@prisma/client';
 import { mapPlaylist } from '../common/utils/playlist-mapper';
+import { generateInviteCodes } from '../common/utils/invite-code';
 import { mapUser } from '../common/utils/user-mapper';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -9,7 +10,7 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getProfile(user: User) {
-    const [inviteCodes, playlists] = await Promise.all([
+    let [inviteCodes, playlists, invitedCount] = await Promise.all([
       this.prisma.inviteCode.findMany({
         where: { createdBy: user.id },
         orderBy: { createdAt: 'desc' },
@@ -25,11 +26,28 @@ export class UsersService {
           },
         },
       }),
+      this.prisma.user.count({ where: { invitedBy: user.id } }),
     ]);
+
+    // Accounts created before user invitations were enabled receive their initial set here.
+    if (inviteCodes.length === 0) {
+      await this.prisma.inviteCode.createMany({
+        data: generateInviteCodes().map((code) => ({
+          code,
+          createdBy: user.id,
+          status: 'unused',
+        })),
+      });
+      inviteCodes = await this.prisma.inviteCode.findMany({
+        where: { createdBy: user.id },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
 
     return {
       user: mapUser(user),
       echoPoints: user.points,
+      invitedCount,
       inviteCodes: inviteCodes.map((c) => ({
         id: c.id,
         code: c.code,
