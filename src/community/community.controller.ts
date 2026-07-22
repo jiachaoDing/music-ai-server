@@ -29,8 +29,14 @@ export class CommunityController {
     @Query('sort') sort?: string,
     @Query('page') page = '1',
     @Query('pageSize') pageSize = '20',
+    @Query('q') query?: string,
   ) {
-    return this.communityService.getFeed(sort, +page || 1, +pageSize || 20);
+    return this.communityService.getFeed(
+      sort,
+      +page || 1,
+      +pageSize || 20,
+      query,
+    );
   }
 
   @Get('resonance')

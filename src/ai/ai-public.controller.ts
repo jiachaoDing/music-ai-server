@@ -167,6 +167,14 @@ export class AiPublicController {
     return this.aiTaskService.dayLyric(type);
   }
 
+  @Get('me/albums')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '获取当前用户的专辑列表' })
+  getMyAlbums(@CurrentUser() user: User) {
+    return this.aiTaskService.getAlbumsByUser(user.id);
+  }
+
   @Get('albums/:id')
   @ApiOperation({ summary: '获取专辑详情' })
   getAlbum(@Param('id') id: string) {

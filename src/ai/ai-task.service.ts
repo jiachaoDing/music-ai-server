@@ -26,6 +26,57 @@ const ALBUM_COST = 5;
 const REMIX_COST = 1;
 const REMIX_AUTHOR_REWARD = 2;
 
+const ALBUM_TRACK_DIRECTIONS = [
+  '开篇：交代场景和人物，建立专辑的第一印象',
+  '发展：聚焦一段具体经历，让情绪逐渐升温',
+  '转折：写出冲突、遗憾或选择，与前一首形成反差',
+  '回应：重新理解主题，给出新的情绪视角',
+  '远行：从当下走向未来，把专辑情绪推向高点',
+  '尾声：收束故事并留下余韵，不重复前面的表达',
+];
+
+function buildAlbumTrackPrompt(
+  theme: string,
+  index: number,
+  trackCount: number,
+  usedTitles: Set<string>,
+) {
+  const direction =
+    ALBUM_TRACK_DIRECTIONS[index - 1] ??
+    `第 ${index} 章：从不同的场景和情绪继续展开主题`;
+  const usedTitleText = usedTitles.size
+    ? Array.from(usedTitles).join('、')
+    : '暂无';
+
+  return [
+    `专辑主题：${theme}`,
+    `这是专辑的第 ${index}/${trackCount} 首歌。`,
+    `曲目定位：${direction}。`,
+    `已使用歌名：${usedTitleText}。`,
+    '请生成独立的中文歌名和完整歌词，歌名不得与已使用歌名重复，同时与整张专辑保持关联。',
+  ].join('\n');
+}
+
+function ensureUniqueAlbumTrackTitle(
+  rawTitle: string | undefined,
+  theme: string,
+  index: number,
+  usedTitles: Set<string>,
+) {
+  const baseTitle = rawTitle?.trim() || `${theme}·第${index}首`;
+  let title = baseTitle;
+  let suffix = 2;
+
+  while (usedTitles.has(title)) {
+    title = `${baseTitle}·${index === 1 ? '序章' : `第${index}章`}`;
+    if (suffix > 2) title = `${title}${suffix}`;
+    suffix += 1;
+  }
+
+  usedTitles.add(title);
+  return title;
+}
+
 type CreateGeneratedSongOptions = {
   fileKey?: string;
   taskId?: string;
@@ -210,18 +261,19 @@ export class AiTaskService {
       title: dto.title,
       style: dto.style,
     });
-    if (!coverResult.imageUrl) return;
+    if (!coverResult.imageUrl) return undefined;
 
     const coverUrl = await this.coverStorageService.persistCover(
       coverResult.imageUrl,
       songId,
     );
-    if (!coverUrl) return;
+    if (!coverUrl) return undefined;
 
     await this.prisma.song.update({
       where: { id: songId },
       data: { coverImg: coverUrl },
     });
+    return coverUrl;
   }
 
   private async generateAndStoreReview(songId: string, dto: MusicRequestDto) {
@@ -286,7 +338,7 @@ export class AiTaskService {
         data: {
           title: `${dto.theme} EP`,
           theme: dto.theme,
-          description: `EP based on ${dto.theme}`,
+          description: `围绕「${dto.theme}」创作的概念专辑。`,
           authorId: user.id,
           authorName: user.name,
           trackCount,
@@ -298,7 +350,32 @@ export class AiTaskService {
         data: { albumId: album.id },
       });
 
+      let albumCoverUrl: string | null = null;
+      try {
+        const coverResult = await this.miniMaxService.generateCover({
+          title: album.title,
+          style: dto.theme,
+          prompt: `Concept album cover for "${dto.theme}", cohesive music artwork, vivid color, no text, no words`,
+        });
+        if (coverResult.imageUrl) {
+          albumCoverUrl =
+            (await this.coverStorageService.persistCover(
+              coverResult.imageUrl,
+              `album_${album.id}`,
+            )) ?? null;
+          if (albumCoverUrl) {
+            await this.prisma.album.update({
+              where: { id: album.id },
+              data: { coverUrl: albumCoverUrl },
+            });
+          }
+        }
+      } catch {
+        albumCoverUrl = null;
+      }
+
       const songs: Array<ReturnType<typeof mapSong> & { order: number }> = [];
+      const usedTrackTitles = new Set<string>();
 
       for (let i = 1; i <= trackCount; i += 1) {
         await this.prisma.aiTask.update({
@@ -319,7 +396,12 @@ export class AiTaskService {
 
         const lyrics = await this.generateLyrics(
           {
-            prompt: `${dto.theme} track ${i}`,
+            prompt: buildAlbumTrackPrompt(
+              dto.theme,
+              i,
+              trackCount,
+              usedTrackTitles,
+            ),
             mode: 'song',
           },
           this.buildAiRequestContext(
@@ -328,12 +410,18 @@ export class AiTaskService {
             Math.max(10, Math.round(((i - 1) / trackCount) * 80)),
           ),
         );
-        const styleText = lyrics.styles?.join(' / ') ?? 'pop';
+        const trackTitle = ensureUniqueAlbumTrackTitle(
+          lyrics.title,
+          dto.theme,
+          i,
+          usedTrackTitles,
+        );
+        const styleText = lyrics.styles?.filter(Boolean).join(' / ') || '流行';
 
         const music = await this.miniMaxService
           .generateMusic(
             {
-              title: lyrics.title,
+              title: trackTitle,
               style: styleText,
               lyrics: lyrics.lyrics,
             },
@@ -345,7 +433,7 @@ export class AiTaskService {
           )
           .catch(() =>
             this.mockService.generateMusic({
-              title: lyrics.title,
+              title: trackTitle,
               style: styleText,
               lyrics: lyrics.lyrics,
             }),
@@ -357,14 +445,14 @@ export class AiTaskService {
 
         const song = await this.prisma.song.create({
           data: {
-            title: lyrics.title,
+            title: trackTitle,
             style: styleText,
             prompt: dto.theme,
             lyrics: lyrics.lyrics,
             audioUrl,
             duration: music.duration ?? 0,
             status: 'draft',
-            mode: 'song',
+            mode: 'album',
             albumId: album.id,
             authorId: user.id,
             authorName: user.name,
@@ -375,7 +463,22 @@ export class AiTaskService {
           data: { albumId: album.id, songId: song.id, order: i },
         });
 
-        songs.push({ ...mapSong(song), order: i });
+        let trackCoverUrl: string | undefined;
+        try {
+          trackCoverUrl = await this.generateAndStoreCover(song.id, {
+            title: song.title,
+            style: styleText,
+            lyrics: lyrics.lyrics,
+            prompt: dto.theme,
+            mode: 'album',
+          });
+        } catch {
+          trackCoverUrl = undefined;
+        }
+        songs.push({
+          ...mapSong(trackCoverUrl ? { ...song, coverImg: trackCoverUrl } : song),
+          order: i,
+        });
       }
 
       await this.prisma.aiTask.update({
@@ -391,7 +494,7 @@ export class AiTaskService {
               name: album.title,
               description: album.description,
               intro: album.description,
-              coverUrl: album.coverUrl,
+              coverUrl: albumCoverUrl,
               authorId: album.authorId,
               author: album.authorName ?? user.name,
               total: trackCount,
@@ -677,6 +780,28 @@ export class AiTaskService {
       album,
       tracks,
     });
+  }
+
+  async getAlbumsByUser(userId: string) {
+    const albums = await this.prisma.album.findMany({
+      where: { authorId: userId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        albumSongs: {
+          include: { song: true },
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+
+    return {
+      list: albums.map((album) =>
+        buildSampleAlbumPayload({
+          album,
+          tracks: album.albumSongs.map((item) => mapSong(item.song)),
+        }),
+      ),
+    };
   }
 
   dayLyric(type: 'vocal' | 'instrumental') {
