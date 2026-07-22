@@ -4,15 +4,10 @@ export function mapComment(comment: Comment) {
   return {
     id: comment.id,
     songId: comment.songId,
+    userId: comment.anon ? null : comment.userId,
+    userName: comment.anon ? '匿名听众' : (comment.userName ?? '用户'),
     text: comment.text,
     anon: comment.anon,
-    author: comment.anon
-      ? null
-      : {
-          id: comment.userId,
-          nickname: comment.userName ?? '用户',
-          avatarUrl: null,
-        },
     createdAt: comment.createdAt.toISOString(),
   };
 }

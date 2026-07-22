@@ -258,6 +258,9 @@ export class CommunityService {
     text: string,
     anon: boolean = false,
   ) {
+    const normalizedText = text.trim();
+    if (!normalizedText) throw new BadRequestException('留言不能为空');
+
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
     if (!song) throw new NotFoundException('作品不存在');
 
@@ -268,16 +271,20 @@ export class CommunityService {
           userId: user.id,
           userName: user.name,
           userColor: user.color,
-          text,
+          text: normalizedText,
           anon,
         },
       });
-      await tx.song.update({
+      const updatedSong = await tx.song.update({
         where: { id: songId },
         data: { commentCount: { increment: 1 } },
+        select: { commentCount: true },
       });
-      return created;
+      return { created, commentCount: updatedSong.commentCount };
     });
-    return { comment: mapComment(comment) };
+    return {
+      comment: mapComment(comment.created),
+      commentCount: comment.commentCount,
+    };
   }
 }

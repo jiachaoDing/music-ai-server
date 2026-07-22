@@ -151,6 +151,11 @@ export class SongsService {
       throw new BadRequestException('已发布作品请先设为仅自己可见，再删除');
     }
 
+    const remixCount = await this.prisma.song.count({ where: { originId: id } });
+    if (remixCount > 0) {
+      throw new BadRequestException('该作品已有翻唱二创，暂时不能删除源作品');
+    }
+
     await this.prisma.$transaction(async (tx) => {
       const playlistLinks = await tx.playlistSong.findMany({
         where: { songId: id },

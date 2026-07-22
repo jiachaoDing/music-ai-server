@@ -75,6 +75,9 @@ export function mapSongBrief(song: Song) {
         }
       : null,
     mode: song.mode,
+    originId: song.originId,
+    likeCount: song.likes,
+    playCount: song.plays,
     createdAt: song.createdAt.toISOString(),
   };
 }

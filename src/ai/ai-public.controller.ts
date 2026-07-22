@@ -179,32 +179,6 @@ export class AiPublicController {
     return this.aiTaskService.getAlbumById(id);
   }
 
-  @Post('song/:id/review')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'AI 乐评' })
-  async generateReview(@Param('id') id: string) {
-    const song = await this.prisma.song.findUnique({ where: { id } });
-    if (!song) throw new NotFoundException('作品不存在');
-
-    const review = await this.miniMaxService
-      .generateReview({
-        title: song.title,
-        style: song.style,
-        lyrics: song.lyrics || undefined,
-      })
-      .catch(() => ({
-        text: `《${song.title}》是一首值得循环的 ${song.style} 风格作品。`,
-      }));
-
-    await this.prisma.song.update({
-      where: { id },
-      data: { review: review.text },
-    });
-
-    return review;
-  }
-
   @Post('song/:id/publish-copy')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
