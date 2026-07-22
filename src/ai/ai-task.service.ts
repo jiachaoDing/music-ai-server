@@ -24,6 +24,7 @@ import { AiRequestContext, MiniMaxService } from './minimax.service';
 const GENERATE_COST = 2;
 const ALBUM_COST = 5;
 const REMIX_COST = 1;
+const REMIX_AUTHOR_REWARD = 2;
 
 type CreateGeneratedSongOptions = {
   fileKey?: string;
@@ -192,45 +193,48 @@ export class AiTaskService {
       },
     });
 
-    let coverUrl: string | null = null;
-    try {
-      const coverResult = await this.miniMaxService.generateCover(
-        {
-          title: dto.title,
-          style: dto.style,
-        },
-        this.buildAiRequestContext(options.taskId, 'generating cover', 70),
-      );
-      if (coverResult.imageUrl) {
-        const persistedUrl = await this.coverStorageService.persistCover(
-          coverResult.imageUrl,
-          song.id,
-        );
-        coverUrl = persistedUrl ?? null;
-      }
-    } catch {}
+    // Match the example: the playable song is ready first; cover and review are
+    // filled in asynchronously through the shared AI concurrency queue.
+    void Promise.allSettled([
+      this.generateAndStoreCover(song.id, dto),
+      dto.isInstrumental
+        ? Promise.resolve()
+        : this.generateAndStoreReview(song.id, dto),
+    ]);
 
-    let aiReview: string | null = null;
-    if (!dto.isInstrumental) {
-      try {
-        const reviewResult = await this.miniMaxService.generateReview(
-          {
-            title: dto.title,
-            style: dto.style,
-            lyrics: dto.lyrics,
-          },
-          this.buildAiRequestContext(options.taskId, 'generating review', 90),
-        );
-        aiReview = reviewResult?.text ?? null;
-      } catch {}
-    }
+    return song;
+  }
 
-    return this.prisma.song.update({
-      where: { id: song.id },
-      data: {
-        coverImg: coverUrl,
-        review: aiReview,
-      },
+  private async generateAndStoreCover(songId: string, dto: MusicRequestDto) {
+    const coverResult = await this.miniMaxService.generateCover({
+      title: dto.title,
+      style: dto.style,
+    });
+    if (!coverResult.imageUrl) return;
+
+    const coverUrl = await this.coverStorageService.persistCover(
+      coverResult.imageUrl,
+      songId,
+    );
+    if (!coverUrl) return;
+
+    await this.prisma.song.update({
+      where: { id: songId },
+      data: { coverImg: coverUrl },
+    });
+  }
+
+  private async generateAndStoreReview(songId: string, dto: MusicRequestDto) {
+    const review = await this.miniMaxService.generateReview({
+      title: dto.title,
+      style: dto.style,
+      lyrics: dto.lyrics,
+    });
+    if (!review.text) return;
+
+    await this.prisma.song.update({
+      where: { id: songId },
+      data: { review: review.text },
     });
   }
 
@@ -433,6 +437,9 @@ export class AiTaskService {
       where: { id: originId },
     });
     if (!originalSong) throw new NotFoundException('original song not found');
+    if (!originalSong.published && originalSong.authorId !== user.id) {
+      throw new ForbiddenException('无法二创他人的未公开作品');
+    }
 
     const points = await this.adminService.deductPoints(
       user.id,
@@ -459,6 +466,8 @@ export class AiTaskService {
       user,
       dto,
       originalSong.title,
+      originalSong.style,
+      originalSong.authorId,
     ).catch((error) =>
       this.markTaskFailed(task.id, error, user.id, REMIX_COST),
     );
@@ -477,24 +486,35 @@ export class AiTaskService {
     user: User,
     dto: { title?: string; style: string; lyrics?: string; prompt: string },
     originalTitle: string,
+    originalStyle: string,
+    originalAuthorId: string | null,
   ) {
     try {
+      const remixStyle = dto.style?.trim() || originalStyle || '流行';
+      const remixLyrics = dto.lyrics?.trim() ?? '';
+      const remixPrompt =
+        dto.prompt?.trim() || `基于《${originalTitle}》进行翻唱二创`;
+      const tags = remixStyle
+        .split(/[,/，]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+        .slice(0, 6);
       const title =
-        dto.title?.trim() || `${originalTitle} (${dto.style} version)`;
+        dto.title?.trim() || `${originalTitle}（${remixStyle}版）`;
       const music = await this.miniMaxService
         .generateMusic(
           {
             title,
-            style: dto.style,
-            lyrics: dto.lyrics ?? '',
+            style: remixStyle,
+            lyrics: remixLyrics,
           },
           this.buildAiRequestContext(taskId, 'generating remix music', 50),
         )
         .catch(() =>
           this.mockService.generateMusic({
             title,
-            style: dto.style,
-            lyrics: dto.lyrics ?? '',
+            style: remixStyle,
+            lyrics: remixLyrics,
           }),
         );
 
@@ -503,47 +523,85 @@ export class AiTaskService {
         taskId,
       );
 
-      const song = await this.prisma.song.create({
-        data: {
-          title,
-          style: dto.style,
-          prompt: dto.prompt,
-          lyrics: dto.lyrics,
-          audioUrl,
-          duration: music.duration ?? 0,
-          status: 'draft',
-          mode: 'remix',
-          originId,
-          authorId: user.id,
-          authorName: user.name,
-          authorColor: user.color,
-        },
+      const song = await this.prisma.$transaction(async (tx) => {
+        const createdSong = await tx.song.create({
+          data: {
+            title,
+            style: remixStyle,
+            tags,
+            prompt: remixPrompt,
+            lyrics: remixLyrics,
+            audioUrl,
+            duration: music.duration ?? 0,
+            status: 'draft',
+            mode: 'remix',
+            isInstrumental: !remixLyrics,
+            originId,
+            authorId: user.id,
+            authorName: user.name,
+            authorColor: user.color,
+          },
+        });
+
+        await tx.remixRelation.create({
+          data: {
+            sourceSongId: originId,
+            newSongId: createdSong.id,
+            type: 'remix',
+            createdBy: user.id,
+          },
+        });
+
+        await tx.song.update({
+          where: { id: originId },
+          data: { coverCount: { increment: 1 } },
+        });
+
+        if (originalAuthorId && originalAuthorId !== user.id) {
+          const rewardedAuthor = await tx.user.update({
+            where: { id: originalAuthorId },
+            data: { points: { increment: REMIX_AUTHOR_REWARD } },
+          });
+          await tx.pointsLedger.create({
+            data: {
+              userId: originalAuthorId,
+              delta: REMIX_AUTHOR_REWARD,
+              reason: '作品被翻唱',
+              balance: rewardedAuthor.points,
+              relatedId: taskId,
+            },
+          });
+        }
+
+        await tx.aiTask.update({
+          where: { id: taskId },
+          data: {
+            status: 'done',
+            progress: 100,
+            stage: 'done',
+            songId: createdSong.id,
+            result: { song: mapSong(createdSong) },
+          },
+        });
+
+        return createdSong;
       });
 
-      await this.prisma.remixRelation.create({
-        data: {
-          sourceSongId: originId,
-          newSongId: song.id,
-          type: 'remix',
-          createdBy: user.id,
-        },
-      });
-
-      await this.prisma.song.update({
-        where: { id: originId },
-        data: { coverCount: { increment: 1 } },
-      });
-
-      await this.prisma.aiTask.update({
-        where: { id: taskId },
-        data: {
-          status: 'done',
-          progress: 100,
-          stage: 'done',
-          songId: song.id,
-          result: { song: mapSong(song) },
-        },
-      });
+      const generatedSongDto: MusicRequestDto = {
+        title,
+        style: remixStyle,
+        lyrics: remixLyrics,
+        prompt: remixPrompt,
+        mode: 'remix',
+        originId,
+        isInstrumental: !remixLyrics,
+      };
+      void Promise.allSettled([
+        this.generateAndStoreCover(song.id, generatedSongDto),
+        remixLyrics
+          ? this.generateAndStoreReview(song.id, generatedSongDto)
+          : Promise.resolve(),
+      ]);
     } catch (error) {
       await this.prisma.aiTask.update({
         where: { id: taskId },

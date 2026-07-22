@@ -230,21 +230,21 @@ export class HostService implements OnModuleInit {
   }
 
   private async pickDailySong() {
-    const candidates = await this.prisma.song.findMany({
+    const songs = await this.prisma.song.findMany({
       where: {
         published: true,
         status: 'published',
-        hostPicked: false,
         authorId: { not: HOST_PROFILE.id },
       },
-      orderBy: [{ createdAt: 'desc' }],
-      take: 20,
     });
 
-    const target =
-      candidates.find(
-        (song) => Date.now() - song.createdAt.getTime() < 3 * 24 * 60 * 60 * 1000,
-      ) ?? candidates[0];
+    const freshSongs = songs.filter(
+      (song) =>
+        !song.hostPicked &&
+        Date.now() - song.createdAt.getTime() < 3 * 24 * 60 * 60 * 1000,
+    );
+    const candidates = freshSongs.length ? freshSongs : songs;
+    const target = candidates[Math.floor(Math.random() * candidates.length)];
 
     if (!target) return null;
 

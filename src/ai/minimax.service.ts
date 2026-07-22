@@ -157,7 +157,7 @@ export class MiniMaxService {
     authorName?: string;
   }) {
     try {
-      const lyricsPreview = song.lyrics ? song.lyrics.slice(0, 240) : '';
+      const lyricsPreview = this.pickLyricHook(song.lyrics);
       const response = await this.runProviderRequest(async () => {
         const client = this.getClient();
         return client.chat.createCompletion({
@@ -167,11 +167,11 @@ export class MiniMaxService {
             {
               role: 'system',
               content:
-                'Write a short, warm music community curator comment in Chinese. No markdown and no JSON.',
+                '你是音乐社区 Echo 的 AI 主理人，温暖、有品味，像懂音乐的朋友。请用 35 字以内的一句中文短评真诚推荐作品，让作者被看见，也让其他人想点开听。只输出短评，不要引号、解释、Markdown 或 JSON。',
             },
             {
               role: 'user',
-              content: `Song: ${song.title}\nAuthor: ${song.authorName ?? 'creator'}\nStyle: ${song.style}\nLyrics preview: ${lyricsPreview}`,
+              content: `歌名：《${song.title}》\n作者：${song.authorName ?? '创作者'}\n风格：${song.style}\n部分歌词：${lyricsPreview || '（纯器乐）'}`,
             },
           ],
         });
@@ -181,11 +181,12 @@ export class MiniMaxService {
       const text =
         response.data.choices[0]?.message.content
           ?.replace(/<think>[\s\S]*?<\/think>/gi, '')
+          .replace(/^["“”]|["“”]$/g, '')
           .trim() || '';
       return {
         text:
           text ||
-          `This song, ${song.title}, has a sincere expression worth hearing.`,
+          `今天想把《${song.title}》轻轻放到你耳边，它值得被更多人听见。`,
       };
     } catch (error) {
       this.handleMiniMaxError(error);
@@ -260,6 +261,7 @@ export class MiniMaxService {
     context?: AiRequestContext,
   ) {
     try {
+      const lyricsPreview = this.pickLyricHook(song.lyrics);
       const response = await this.runProviderRequest(async () => {
         const client = this.getClient();
         return client.chat.createCompletion({
@@ -269,11 +271,11 @@ export class MiniMaxService {
             {
               role: 'system',
               content:
-                'Write a concise Chinese music review in one or two sentences.',
+                '你是毒舌又走心的乐评人。请写一句简短、有网感、让人想分享的中文乐评。只输出短评本身，不要引号、解释、Markdown 或 JSON。',
             },
             {
               role: 'user',
-              content: `Song: ${song.title}\nStyle: ${song.style}\nLyrics: ${song.lyrics ?? ''}`,
+              content: `歌名：《${song.title}》\n风格：${song.style}\n部分歌词：${lyricsPreview}`,
             },
           ],
         });
@@ -556,6 +558,15 @@ export class MiniMaxService {
       : '';
     const forWho = dto.forWho ? `\nWrite for: ${dto.forWho}` : '';
     return `${basePrompt}\nIdea: ${dto.prompt || ''}${styles}${forWho}\nReturn a complete lyric with title and style tags.`;
+  }
+
+  private pickLyricHook(lyrics?: string) {
+    return (lyrics ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('['))
+      .slice(0, 6)
+      .join(' ');
   }
 
   private parseLyricsResponse(rawText: string) {
