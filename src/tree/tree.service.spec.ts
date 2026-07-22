@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TreeService } from './tree.service';
 
+vi.mock('@prisma/client', () => ({
+  PrismaClient: class {
+    async $disconnect() {
+      return undefined;
+    }
+  },
+}));
+
 function song(
   id: string,
   originId: string | null,
