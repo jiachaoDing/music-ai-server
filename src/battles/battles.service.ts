@@ -52,6 +52,16 @@ export class BattlesService {
 
   async create(user: User, topic: string, aId: string, bId: string) {
     if (aId === bId) throw new BadRequestException('对战作品不能相同');
+    const availableSongCount = await this.prisma.song.count({
+      where: {
+        id: { in: [aId, bId] },
+        published: true,
+        status: 'published',
+      },
+    });
+    if (availableSongCount !== 2) {
+      throw new BadRequestException('只能选择两首已发布的公开歌曲');
+    }
     const battle = await this.prisma.battle.create({
       data: { topic, aId, bId, createdBy: user.id },
       include: {

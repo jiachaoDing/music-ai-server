@@ -27,6 +27,7 @@ export function mapSong(song: Song, options?: SongMapOptions) {
     published: song.published,
     isInstrumental: song.isInstrumental,
     originId: song.originId,
+    albumId: song.albumId,
     aiReview: song.review,
     author: song.authorId
       ? {

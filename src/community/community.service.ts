@@ -56,26 +56,40 @@ function hashString(input: string) {
 export class CommunityService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getFeed(sort: string = 'new', page = 1, pageSize = 20) {
+  async getFeed(sort: string = 'new', page = 1, pageSize = 20, query?: string) {
     const orderBy =
       sort === 'hot'
         ? [{ plays: 'desc' as const }, { likes: 'desc' as const }]
         : [{ createdAt: 'desc' as const }];
 
     const skip = (page - 1) * pageSize;
+    const keyword = query?.trim().slice(0, 80);
+    const where = {
+      published: true,
+      status: 'published',
+      ...(keyword
+        ? {
+            OR: [
+              { title: { contains: keyword, mode: 'insensitive' as const } },
+              { authorName: { contains: keyword, mode: 'insensitive' as const } },
+              { style: { contains: keyword, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+    };
     const [songs, total] = await Promise.all([
       this.prisma.song.findMany({
-        where: { published: true, status: 'published' },
+        where,
         orderBy,
         skip,
         take: pageSize,
       }),
       this.prisma.song.count({
-        where: { published: true, status: 'published' },
+        where,
       }),
     ]);
 
-    return { list: songs.map((s) => mapSong(s)), total, page, pageSize, sort };
+    return { list: songs.map((s) => mapSong(s)), total, page, pageSize, sort, query: keyword ?? '' };
   }
 
   async getResonance(name = '旅人') {
