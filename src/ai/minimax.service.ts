@@ -409,17 +409,17 @@ export class MiniMaxService {
             },
             body: JSON.stringify({
               model: TEXT_MODEL,
-              max_completion_tokens: 300,
+              max_completion_tokens: 900,
               temperature: 0.8,
               messages: [
                 {
-                  role: 'system',
-                  content:
-                    'Write a 60-80 character Chinese AI DJ intro for a song. No markdown.',
-                },
-                {
                   role: 'user',
-                  content: `Song: ${song.title}\nStyle: ${song.style}\nLyrics preview: ${lyricsPreview}`,
+                  content:
+                    `你是深夜电台 DJ。为风格“${song.style}”的歌曲《${song.title}》` +
+                    `写一句简短、温暖、口语化的电台开场白，像在跟听众聊天。` +
+                    `必须自然提到歌名《${song.title}》，并结合这首歌的歌词或情绪，` +
+                    `不要使用固定套话。直接给台词，不要解释。` +
+                    (lyricsPreview ? `\n歌词片段：${lyricsPreview}` : ''),
                 },
               ],
             }),
@@ -439,34 +439,51 @@ export class MiniMaxService {
 
   async generateTts(
     text: string,
-    style?: string,
+    _style?: string,
     context?: AiRequestContext,
   ): Promise<string> {
     try {
-      const response = await this.runProviderRequest(async () => {
-        const client = this.getClient();
-        const voiceConfig = this.resolveVoiceConfig(style);
-        return client.speech.synthesize({
-          model: 'speech-2.8-hd',
-          text,
-          voice_setting: {
-            voice_id: voiceConfig.voice_id,
-            speed: voiceConfig.speed,
-          },
-          audio_setting: {
-            sample_rate: 32000,
-            format: 'mp3',
-          },
-        });
-      }, context);
-
-      this.assertProviderSuccess(response.data);
-      const data = response.data.data as { audio_url?: string; audio?: string };
-      if (data.audio_url) return data.audio_url;
-      if (data.audio) {
-        const buffer = Buffer.from(data.audio, 'hex');
-        return `data:audio/mp3;base64,${buffer.toString('base64')}`;
+      const apiKey = process.env.MINIMAX_API_KEY?.trim();
+      if (!apiKey) {
+        throw new ServiceUnavailableException('MINIMAX_API_KEY is not set');
       }
+
+      const result = await this.runProviderRequest(
+        () =>
+          this.fetchMiniMaxJson(
+            '/v1/t2a_v2',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
+              },
+              body: JSON.stringify({
+                model: 'speech-2.6-hd',
+                text,
+                output_format: 'url',
+                voice_setting: {
+                  voice_id: 'Chinese (Mandarin)_Radio_Host',
+                  speed: 1,
+                  vol: 1,
+                  pitch: 0,
+                  emotion: 'calm',
+                },
+                audio_setting: {
+                  sample_rate: 32000,
+                  bitrate: 128000,
+                  format: 'mp3',
+                },
+              }),
+            },
+            context?.timeoutMs ?? 120000,
+          ),
+        { ...context, retries: context?.retries ?? 1, timeoutMs: context?.timeoutMs ?? 120000 },
+      );
+
+      const data = result.data as JsonObject | undefined;
+      const audio = data ? this.pickString(data, 'audio') : '';
+      if (audio) return audio;
       return '';
     } catch (error) {
       this.handleMiniMaxError(error);

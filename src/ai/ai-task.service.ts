@@ -541,8 +541,8 @@ export class AiTaskService {
       where: { id: originId },
     });
     if (!originalSong) throw new NotFoundException('original song not found');
-    if (!originalSong.published && originalSong.authorId !== user.id) {
-      throw new ForbiddenException('无法二创他人的未公开作品');
+    if (!originalSong.published || originalSong.status !== 'published') {
+      throw new ForbiddenException('草稿作品发布后才能进行翻唱二创');
     }
 
     const points = await this.adminService.deductPoints(
@@ -726,8 +726,16 @@ export class AiTaskService {
   async generateDj(songId: string) {
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
     if (!song) throw new NotFoundException('song not found');
+    if (!song.published || song.status !== 'published') {
+      throw new ForbiddenException('草稿作品发布后才能生成 AI DJ 播报');
+    }
 
-    if (song.djText && song.djUrl) {
+    const legacyDjTemplate = '接下来这首歌，像一盏开在深夜路口的灯';
+    const cachedDjMatchesSong =
+      Boolean(song.djText && song.djUrl) &&
+      song.djText!.includes(song.title) &&
+      !song.djText!.includes(legacyDjTemplate);
+    if (cachedDjMatchesSong) {
       return {
         text: song.djText,
         audioUrl: song.djUrl,
@@ -737,8 +745,8 @@ export class AiTaskService {
       };
     }
 
-    let djText = song.djText || this.mockService.generateDjText(song.title).text;
-    if (!song.djText) {
+    let djText = this.mockService.generateDjText(song.title).text;
+    if (!cachedDjMatchesSong) {
       try {
         const scriptResult = await this.miniMaxService.generateDjScript({
           title: song.title,
@@ -755,6 +763,7 @@ export class AiTaskService {
     }
 
     let djUrl: string | null = null;
+    let ttsFailureReason = '';
     try {
       const ttsUrl = await this.miniMaxService.generateTts(djText, song.style);
       if (ttsUrl) {
@@ -765,6 +774,8 @@ export class AiTaskService {
         djUrl = persistedUrl ?? null;
       }
     } catch (error) {
+      ttsFailureReason =
+        error instanceof Error ? error.message : 'unknown TTS error';
       console.error('[DJ] tts generation failed:', error);
     }
 
@@ -773,7 +784,11 @@ export class AiTaskService {
         where: { id: songId },
         data: { djText },
       });
-      throw new ServiceUnavailableException('AI DJ 语音生成失败，请稍后重试');
+      throw new ServiceUnavailableException(
+        ttsFailureReason
+          ? `AI DJ 语音生成失败：${ttsFailureReason}`
+          : 'AI DJ 语音生成失败，请稍后重试',
+      );
     }
 
     await this.prisma.song.update({

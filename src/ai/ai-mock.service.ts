@@ -54,8 +54,17 @@ export class AiMockService {
   }
 
   generateDjText(title: string) {
+    const variants = [
+      `夜色正好，把《${title}》送给还没睡的你，愿这段旋律陪你慢慢放松。`,
+      `欢迎回到 Echo 电台，接下来听《${title}》，让这一刻跟着音乐安静下来。`,
+      `此刻为你播放《${title}》，希望它刚好唱中你今天没有说出口的心情。`,
+    ];
+    const index = Array.from(title).reduce(
+      (sum, character) => sum + (character.codePointAt(0) ?? 0),
+      0,
+    );
     return {
-      text: `接下来这首歌，像一盏开在深夜路口的灯。欢迎来到回声电台，为你播放「${title}」。`,
+      text: variants[index % variants.length],
       audioUrl: null,
       mock: true,
     };

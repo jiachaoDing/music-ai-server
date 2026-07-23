@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import sharp from 'sharp';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -13,6 +17,10 @@ export class PosterService {
 
     if (!song) {
       throw new NotFoundException('作品不存在');
+    }
+
+    if (!song.published || song.status !== 'published') {
+      throw new ForbiddenException('草稿作品发布后才能生成分享海报');
     }
 
     const canvas = sharp({

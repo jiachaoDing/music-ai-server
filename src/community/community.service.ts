@@ -177,6 +177,10 @@ export class CommunityService {
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
     if (!song) throw new NotFoundException('作品不存在');
 
+    if (!song.published || song.status !== 'published') {
+      throw new BadRequestException('草稿作品发布后才能点赞');
+    }
+
     const existing = await this.prisma.like.findFirst({
       where: { userId: user.id, songId },
     });
@@ -234,6 +238,10 @@ export class CommunityService {
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
     if (!song) throw new NotFoundException('作品不存在');
 
+    if (!song.published || song.status !== 'published') {
+      throw new BadRequestException('草稿作品发布后才能收藏');
+    }
+
     const existing = await this.prisma.collect.findFirst({
       where: { userId: user.id, songId },
     });
@@ -263,6 +271,15 @@ export class CommunityService {
   }
 
   async getComments(songId: string) {
+    const song = await this.prisma.song.findUnique({
+      where: { id: songId },
+      select: { published: true, status: true },
+    });
+    if (!song) throw new NotFoundException('作品不存在');
+    if (!song.published || song.status !== 'published') {
+      return { list: [] };
+    }
+
     const comments = await this.prisma.comment.findMany({
       where: { songId, deletedAt: null, status: 'approved' },
       orderBy: { createdAt: 'desc' },
@@ -291,6 +308,10 @@ export class CommunityService {
 
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
     if (!song) throw new NotFoundException('作品不存在');
+
+    if (!song.published || song.status !== 'published') {
+      throw new BadRequestException('草稿作品发布后才能评论');
+    }
 
     await this.assertCommentFrequency(user.id, normalizedText);
     const basicRuleReason = this.getBasicRuleRejection(normalizedText);
