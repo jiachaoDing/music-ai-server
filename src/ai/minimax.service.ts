@@ -23,6 +23,13 @@ export type AiRequestContext = {
   timeoutMs?: number;
 };
 
+export type CommentModerationResult = {
+  decision: 'approve' | 'reject' | 'review';
+  category: string;
+  reason: string;
+  confidence: number;
+};
+
 const MINIMAX_BASE_URL = 'https://api.minimaxi.com';
 const TEXT_MODEL = 'MiniMax-M3';
 const MUSIC_MODEL = 'music-2.6';
@@ -75,6 +82,53 @@ export class MiniMaxService {
         image: IMAGE_MODEL,
         tts: TTS_MODEL,
       },
+    };
+  }
+
+  async moderateComment(content: string): Promise<CommentModerationResult> {
+    const response = await this.runProviderRequest(async () => {
+      const client = this.getClient();
+      return client.chat.createCompletion({
+        model: TEXT_MODEL,
+        max_completion_tokens: 180,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是 Echo AI 音乐社区的评论审核器。判断评论是否包含辱骂攻击、色情低俗、暴力威胁、违法内容、广告引流、隐私泄露或恶意刷屏。正常的音乐批评和负面评价必须允许。只返回 JSON：{"decision":"approve|reject|review","category":"normal|abuse|sexual|violence|illegal|spam|privacy|uncertain","reason":"简短中文理由","confidence":0.0}。明确正常返回 approve，明确违规返回 reject，无法确定返回 review。',
+          },
+          {
+            role: 'user',
+            content: `待审核评论：${content}`,
+          },
+        ],
+      });
+    }, { retries: 0, timeoutMs: 5000 });
+
+    this.assertProviderSuccess(response.data);
+    const rawText = response.data.choices[0]?.message.content?.trim() || '';
+    const parsed =
+      this.safeParseObject(this.extractJsonText(rawText) ?? '') ?? {};
+    const rawDecision = this.pickString(parsed, 'decision').toLowerCase();
+    const decision =
+      rawDecision === 'approve' ||
+      rawDecision === 'reject' ||
+      rawDecision === 'review'
+        ? rawDecision
+        : 'review';
+    const rawConfidence = parsed.confidence;
+    const confidence =
+      typeof rawConfidence === 'number' && Number.isFinite(rawConfidence)
+        ? Math.max(0, Math.min(1, rawConfidence))
+        : 0;
+
+    return {
+      decision,
+      category: this.pickString(parsed, 'category') || 'uncertain',
+      reason:
+        this.pickString(parsed, 'reason') ||
+        (decision === 'review' ? 'AI 无法确定，已转人工审核' : 'AI 自动审核'),
+      confidence,
     };
   }
 

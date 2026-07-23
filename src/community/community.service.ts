@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { User } from '@prisma/client';
+import { MiniMaxService } from '../ai/minimax.service';
 import { FORYOU_UNLOCK_LIKES } from '../common/constants';
 import { mapComment } from '../common/utils/comment-mapper';
 import { mapSong } from '../common/utils/song-mapper';
@@ -54,7 +55,10 @@ function hashString(input: string) {
 
 @Injectable()
 export class CommunityService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly miniMaxService: MiniMaxService,
+  ) {}
 
   async getFeed(sort: string = 'new', page = 1, pageSize = 20, query?: string) {
     const orderBy =
@@ -260,7 +264,7 @@ export class CommunityService {
 
   async getComments(songId: string) {
     const comments = await this.prisma.comment.findMany({
-      where: { songId, deletedAt: null },
+      where: { songId, deletedAt: null, status: 'approved' },
       orderBy: { createdAt: 'desc' },
     });
     comments.sort((left, right) => {
@@ -288,6 +292,32 @@ export class CommunityService {
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
     if (!song) throw new NotFoundException('作品不存在');
 
+    await this.assertCommentFrequency(user.id, normalizedText);
+    const basicRuleReason = this.getBasicRuleRejection(normalizedText);
+    if (basicRuleReason) {
+      throw new BadRequestException(basicRuleReason);
+    }
+
+    let moderation: {
+      decision: 'approve' | 'reject' | 'review';
+      reason: string;
+    };
+    try {
+      moderation = await this.miniMaxService.moderateComment(normalizedText);
+    } catch {
+      moderation = {
+        decision: 'review',
+        reason: 'AI 审核暂时不可用，已转交管理员审核',
+      };
+    }
+    if (moderation.decision === 'reject') {
+      throw new BadRequestException(
+        moderation.reason || '评论可能包含不适宜内容，请修改后重试',
+      );
+    }
+
+    const status =
+      moderation.decision === 'approve' ? 'approved' : 'pending';
     const comment = await this.prisma.$transaction(async (tx) => {
       const created = await tx.comment.create({
         data: {
@@ -297,8 +327,15 @@ export class CommunityService {
           userColor: user.color,
           text: normalizedText,
           anon,
+          status,
+          moderationReason: moderation.reason,
+          moderationSource: 'ai',
+          moderatedAt: new Date(),
         },
       });
+      if (status !== 'approved') {
+        return { created, commentCount: song.commentCount };
+      }
       const updatedSong = await tx.song.update({
         where: { id: songId },
         data: { commentCount: { increment: 1 } },
@@ -307,8 +344,46 @@ export class CommunityService {
       return { created, commentCount: updatedSong.commentCount };
     });
     return {
-      comment: mapComment(comment.created),
+      status,
+      message:
+        status === 'approved'
+          ? '评论发布成功'
+          : '评论已提交，正在等待管理员审核',
+      comment: status === 'approved' ? mapComment(comment.created) : null,
       commentCount: comment.commentCount,
     };
+  }
+
+  private getBasicRuleRejection(text: string) {
+    if (
+      /(https?:\/\/|www\.|(?:微信|vx|v信|qq)[:：号\s]*[a-z0-9_-]{5,})/i.test(
+        text,
+      )
+    ) {
+      return '评论中不能包含广告链接或联系方式';
+    }
+    if (/(.)\1{11,}/u.test(text)) {
+      return '评论包含过多重复内容，请修改后重试';
+    }
+    return null;
+  }
+
+  private async assertCommentFrequency(userId: string, text: string) {
+    const recent = await this.prisma.comment.findMany({
+      where: {
+        userId,
+        createdAt: { gte: new Date(Date.now() - 60_000) },
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: { text: true },
+    });
+    if (recent.some((comment) => comment.text.trim() === text)) {
+      throw new BadRequestException('请勿重复提交相同评论');
+    }
+    if (recent.length >= 5) {
+      throw new BadRequestException('评论过于频繁，请稍后再试');
+    }
   }
 }
