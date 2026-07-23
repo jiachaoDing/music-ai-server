@@ -159,21 +159,26 @@ model AiTask {
 }
 
 model Comment {
-  id        String    @id @default(cuid())
-  songId    String
-  userId    String
-  userName  String?
-  userColor String?
-  text      String
-  anon      Boolean   @default(false)
-  deletedAt DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id               String    @id @default(cuid())
+  songId           String
+  userId           String
+  userName         String?
+  userColor        String?
+  text             String
+  anon             Boolean   @default(false)
+  status           String    @default("approved")
+  moderationReason String?
+  moderationSource String?
+  moderatedAt      DateTime?
+  deletedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([songId])
+  @@index([status])
   @@map("comments")
 }
 

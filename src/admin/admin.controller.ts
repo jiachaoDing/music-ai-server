@@ -172,6 +172,8 @@ function mapAdminCommentRow(comment: {
   userName: string | null;
   text: string;
   anon: boolean;
+  status: string;
+  moderationReason: string | null;
   createdAt: Date;
   song: { title: string | null } | null;
 }) {
@@ -183,6 +185,8 @@ function mapAdminCommentRow(comment: {
     userId: comment.userId,
     userName: comment.userName ?? '匿名旅人',
     anon: comment.anon,
+    status: comment.status,
+    moderationReason: comment.moderationReason,
     createdAt: comment.createdAt.toISOString(),
   };
 }
@@ -208,6 +212,30 @@ function mapAdminChallengeRow(challenge: {
     active: challenge.active,
     songCount: challenge._count?.songs ?? 0,
     createdAt: challenge.createdAt.toISOString(),
+  };
+}
+
+function mapAdminBattleRow(battle: {
+  id: string;
+  topic: string;
+  aVotes: number;
+  bVotes: number;
+  status: string;
+  createdAt: Date;
+  creator?: { name: string } | null;
+  songA?: { title: string } | null;
+  songB?: { title: string } | null;
+}) {
+  return {
+    id: battle.id,
+    topic: battle.topic,
+    songATitle: battle.songA?.title ?? '(已删除)',
+    songBTitle: battle.songB?.title ?? '(已删除)',
+    creatorName: battle.creator?.name ?? '未知用户',
+    votesA: battle.aVotes,
+    votesB: battle.bVotes,
+    status: battle.status,
+    createdAt: battle.createdAt.toISOString(),
   };
 }
 
@@ -639,6 +667,7 @@ export class AdminController {
         where: { id },
         data: { deletedAt: new Date() },
       });
+      if (comment.status !== 'approved') return null;
       const song = await tx.song.findUnique({
         where: { id: comment.songId },
         select: { commentCount: true },
@@ -676,6 +705,62 @@ export class AdminController {
       include: publishedChallengeSongCountInclude,
     });
     return { list: challenges.map(mapAdminChallengeRow) };
+  }
+
+  @Patch('comments/:id/approve')
+  @ApiOperation({ summary: '通过待审核评论' })
+  async approveComment(@Param('id') id: string) {
+    const comment = await this.prisma.comment.findUnique({ where: { id } });
+    if (!comment || comment.deletedAt) {
+      throw new NotFoundException('评论不存在');
+    }
+    if (comment.status === 'approved') {
+      return { approved: true, commentId: id };
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.comment.update({
+        where: { id },
+        data: {
+          status: 'approved',
+          moderationSource: 'admin',
+          moderatedAt: new Date(),
+        },
+      }),
+      this.prisma.song.update({
+        where: { id: comment.songId },
+        data: { commentCount: { increment: 1 } },
+      }),
+    ]);
+    return { approved: true, commentId: id };
+  }
+
+  @Get('battles')
+  @ApiOperation({ summary: 'PK 擂台管理' })
+  async listBattles() {
+    const battles = await this.prisma.battle.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        creator: { select: { name: true } },
+        songA: { select: { title: true } },
+        songB: { select: { title: true } },
+      },
+    });
+    return { list: battles.map(mapAdminBattleRow) };
+  }
+
+  @Delete('battles/:id')
+  @ApiOperation({ summary: '管理员删除 PK 擂台' })
+  async deleteBattle(@Param('id') id: string) {
+    const battle = await this.prisma.battle.findUnique({ where: { id } });
+    if (!battle) throw new NotFoundException('擂台不存在');
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.battleVote.deleteMany({ where: { battleId: id } });
+      await tx.battle.delete({ where: { id } });
+    });
+
+    return { deleted: true, battleId: id };
   }
 
   @Post('challenges')

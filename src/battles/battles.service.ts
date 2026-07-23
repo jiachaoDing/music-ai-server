@@ -113,8 +113,8 @@ export class BattlesService {
     if (!battle) throw new NotFoundException('擂台不存在');
 
     const isAdmin = user.role === 'admin';
-    if (battle.createdBy !== user.id && !isAdmin) {
-      throw new ForbiddenException('你无权删除该擂台');
+    if (!isAdmin) {
+      throw new ForbiddenException('只有管理员可以删除擂台');
     }
 
     await this.prisma.$transaction(async (tx) => {
