@@ -263,6 +263,13 @@ export class CommunityService {
       where: { songId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
+    comments.sort((left, right) => {
+      const hostDifference =
+        Number(right.userId === 'echo-host') -
+        Number(left.userId === 'echo-host');
+      if (hostDifference) return hostDifference;
+      return right.createdAt.getTime() - left.createdAt.getTime();
+    });
     return { list: comments.map(mapComment) };
   }
 
@@ -274,6 +281,9 @@ export class CommunityService {
   ) {
     const normalizedText = text.trim();
     if (!normalizedText) throw new BadRequestException('留言不能为空');
+    if (normalizedText.length > 240) {
+      throw new BadRequestException('评论不能超过 240 字');
+    }
 
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
     if (!song) throw new NotFoundException('作品不存在');
