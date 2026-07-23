@@ -2,6 +2,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { User } from '@prisma/client';
 import { AdminService } from '../admin/admin.service';
@@ -726,19 +727,31 @@ export class AiTaskService {
     const song = await this.prisma.song.findUnique({ where: { id: songId } });
     if (!song) throw new NotFoundException('song not found');
 
-    let djText = this.mockService.generateDjText(song.title).text;
-    try {
-      const scriptResult = await this.miniMaxService.generateDjScript({
-        title: song.title,
-        style: song.style,
-        lyrics: song.lyrics || undefined,
-        authorName: song.authorName || undefined,
-      });
-      if (scriptResult?.text) {
-        djText = scriptResult.text;
+    if (song.djText && song.djUrl) {
+      return {
+        text: song.djText,
+        audioUrl: song.djUrl,
+        djText: song.djText,
+        djUrl: song.djUrl,
+        cached: true,
+      };
+    }
+
+    let djText = song.djText || this.mockService.generateDjText(song.title).text;
+    if (!song.djText) {
+      try {
+        const scriptResult = await this.miniMaxService.generateDjScript({
+          title: song.title,
+          style: song.style,
+          lyrics: song.lyrics || undefined,
+          authorName: song.authorName || undefined,
+        });
+        if (scriptResult?.text) {
+          djText = scriptResult.text;
+        }
+      } catch (error) {
+        console.error('[DJ] script generation failed:', error);
       }
-    } catch (error) {
-      console.error('[DJ] script generation failed:', error);
     }
 
     let djUrl: string | null = null;
@@ -755,11 +768,25 @@ export class AiTaskService {
       console.error('[DJ] tts generation failed:', error);
     }
 
+    if (!djUrl) {
+      await this.prisma.song.update({
+        where: { id: songId },
+        data: { djText },
+      });
+      throw new ServiceUnavailableException('AI DJ 语音生成失败，请稍后重试');
+    }
+
     await this.prisma.song.update({
       where: { id: songId },
       data: { djText, djUrl },
     });
-    return { text: djText, audioUrl: djUrl };
+    return {
+      text: djText,
+      audioUrl: djUrl,
+      djText,
+      djUrl,
+      cached: false,
+    };
   }
 
   async getAlbumById(id: string) {
