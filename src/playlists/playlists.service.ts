@@ -77,6 +77,11 @@ export class PlaylistsService {
 
   async addSong(playlistId: string, user: User, songId: string) {
     await this.ensureOwner(playlistId, user.id);
+    const song = await this.prisma.song.findUnique({ where: { id: songId } });
+    if (!song) throw new NotFoundException('作品不存在');
+    if (!song.published || song.status !== 'published') {
+      throw new BadRequestException('草稿作品发布后才能加入歌单');
+    }
     const exists = await this.prisma.playlistSong.findFirst({
       where: { playlistId, songId },
     });

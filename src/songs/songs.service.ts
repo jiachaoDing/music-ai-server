@@ -184,6 +184,9 @@ export class SongsService {
   async recordPlay(id: string) {
     const song = await this.prisma.song.findUnique({ where: { id } });
     if (!song) throw new NotFoundException('作品不存在');
+    if (!song.published || song.status !== 'published') {
+      return { playCount: song.plays };
+    }
     const updated = await this.prisma.song.update({
       where: { id },
       data: { plays: { increment: 1 } },
