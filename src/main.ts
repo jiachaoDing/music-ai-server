@@ -13,12 +13,20 @@ async function bootstrap() {
   const corsOrigins = process.env.CORS_ORIGIN?.split(',') ?? [];
   app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/',
+    maxAge: '1y',
+    immutable: true,
+    etag: true,
+    lastModified: true,
     setHeaders: (res) => {
       res.setHeader(
         'Access-Control-Allow-Origin',
         corsOrigins[0]?.trim() || '*',
       );
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader(
+        'Cache-Control',
+        'public, max-age=31536000, immutable',
+      );
     },
   });
   app.use(json({ limit: '12mb' }));
